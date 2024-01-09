@@ -5,17 +5,40 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Remote Attach",
+            "name": "Python: Pytest",
             "type": "python",
-            "request": "attach",
-            "port": 5678,
-            "host": "localhost",
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}",
-                    "remoteRoot": "."
-                }
-            ]
+            "request": "launch",
+            "module": "pytest",
+            "args": [
+                // "tests/test_adkg.py",
+                // "tests/test_acssht.py",
+                // "tests/test_admpc_adkg.py",
+                // "tests/test_admpc.py",
+                "tests/test_interpolate_at.py",
+                // "tests/test_preprocessing.py",
+                // "tests/test_GFE_admpc.py",
+                // "-o",
+                // "log_cli=true",
+                // "--num 4",
+                "--capture=no",
+                "--num=4",
+                // "--ths 1",
+                "--ths=1",
+                // "--deg 2",
+                "--deg=1",
+                // "--curve ed25519"
+                "--curve=ed25519"
+              ],
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "env": {"PYTHONPATH":"${workspaceRoot}"},
+        }, 
+        {
+            "name": "Python: Current File",
+            "type": "python",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
         }
     ]
 }

@@ -2,7 +2,7 @@ from adkg.poly_commit_hybrid import PolyCommitHybrid
 from pytest import mark
 from random import randint
 from adkg.polynomial import polynomials_over
-from adkg.acss import ACSS
+from adkg.acss_ht import ACSS_HT
 from adkg.utils.misc import print_exception_callback
 import asyncio
 import math
@@ -20,11 +20,11 @@ def get_avss_params(n, t):
 
 
 @mark.asyncio
-async def test_acss(test_router):
+async def test_hbacss0(test_router):
     t = 1
-    deg = t
+    deg = 2*t
     n = 3 * t + 1
-    sc = 2
+    sc = math.ceil(deg/t) + 1
 
     g, h, pks, sks = get_avss_params(n, t)
     sends, recvs, _ = test_router(n, maxdelay=0.001)
@@ -37,12 +37,14 @@ async def test_acss(test_router):
     shares = [None] * n
     hbavss_list = [None] * n
     for i in range(n):
-        hbavss = ACSS(pks, sks[i], g, h, n, t, deg, i, sends[i], recvs[i], pc, ZR, G1)
+        print(f"id: {i} sends[{i}]: {sends[i]}")
+        print(f"id: {i} recvs[{i}]: {recvs[i]}")
+        hbavss = ACSS_HT(pks, sks[i], g, h, n, t, deg, sc, i, sends[i], recvs[i], pc, ZR, G1)
         hbavss_list[i] = hbavss
         if i == dealer_id:
-            avss_tasks[i] = asyncio.create_task(hbavss.avss(0, values=values, dealer_id=None))
+            avss_tasks[i] = asyncio.create_task(hbavss.avss(0, values=values))
         else:
-            avss_tasks[i] = asyncio.create_task(hbavss.avss(0, dealer_id=dealer_id, values=None))
+            avss_tasks[i] = asyncio.create_task(hbavss.avss(0, dealer_id=dealer_id))
         avss_tasks[i].add_done_callback(print_exception_callback)
     outputs = await asyncio.gather(
         *[hbavss_list[i].output_queue.get() for i in range(n)]

@@ -17,6 +17,10 @@ from .polynomial import polynomials_over
 from .ntl import vandermonde_batch_evaluate
 from .elliptic_curve import Subgroup
 
+# from pypairing import Curve25519ZR as ZR
+from pypairing import ZR, G1, blsmultiexp as multiexp, dotprod
+
+
 
 class PreProcessingConstants(Enum):
     SHARED_DATA_DIR = "sharedata/"
@@ -219,6 +223,13 @@ class PreProcessingMixin(ABC):
             polys: polynomials corresponding to secret share values to write
             append: Whether or not to append shares to an existing file, or to overwrite.
         """
+        # polys = [[coeff.value for coeff in poly.coeffs] for poly in polys]
+        # for poly in polys: 
+        #     for coeff in poly.coeffs: 
+        #         print(f"coeff type: {type(coeff)}")
+        #         val = coeff.value
+        #         print(f"val type: {type(val)}")
+
         polys = [[coeff.value for coeff in poly.coeffs] for poly in polys]
         all_values = vandermonde_batch_evaluate(
             list(range(1, n + 1)), polys, self.field.modulus
@@ -530,6 +541,14 @@ class PreProcessedElements:
         if field is None:
             field = PreProcessedElements.DEFAULT_FIELD
 
+        # self.field = ZR
+        # self.poly = polynomials_over(ZR)
+            
+        # self.field = GF(ZR)
+        # self.poly = polynomials_over(self.field)
+
+        # field = ZR
+        
         self.field = field
         self.poly = polynomials_over(field)
 

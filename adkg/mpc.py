@@ -19,10 +19,14 @@ from .preprocessing import PreProcessedElements
 from .config import ConfigVars
 from .exceptions import adkgError
 
+from pypairing import ZR, G1, blsmultiexp as multiexp
+from random import randint
+
+
 
 class Mpc(object):
     def __init__(
-        self, sid, n, t, myid, send, recv, prog, config, preproc=None, **prog_args
+        self, sid, n, t, myid, g, h, public_keys, private_key, avss_tasks, dealer_id, shares, acss_list, send, recv, prog, config, preproc=None, **prog_args
     ):
         # Parameters for robust MPC
         # Note: tolerates min(t,N-t) crash faults
@@ -32,6 +36,15 @@ class Mpc(object):
         self.N = n
         self.t = t
         self.myid = myid
+
+        # 以下四个参数是 ACSS 用到的公共参数
+        self.g = g
+        self.h = h
+        self.public_keys, self.private_key = public_keys, private_key
+
+        # 这里也是 acss 需要的参数
+        self.avss_tasks, self.dealer_id, self.shares, self.acss_list = avss_tasks, dealer_id, shares, acss_list
+
         self.field = GF(Subgroup.BLS12_381)
         self.poly = polynomials_over(self.field)
         self.config = config
@@ -71,6 +84,13 @@ class Mpc(object):
             "GFElementFuture", (GFElementFuture,), {"context": self}
         )
 
+    async def get_acss_output(self):
+        # 假设 self.acss 是 ACSS_HT 实例，并且它有一个 output_queue 属性
+        # return await self.acss_list[self.myid].output_queue.get()
+        return await self.acss_list[self.myid].output_queue.get()
+    
+    
+    
     def _get_share_id(self):
         """Returns a monotonically increasing int value
         each time this is called
@@ -282,24 +302,67 @@ class TaskProgramRunner(ProgramRunner):
         self.loop = asyncio.get_event_loop()
         self.router = SimpleRouter(self.N)
 
+        # 存储 MPC 实例
+        self.mpc_instances = []
+
+    # 该函数的作用是为每个参与方生成 acss 需要的公共参数，即 g, h, public_keys, private_keys 但这里这些参数的类型是 pypairing.ZR 后面应该换成 GFE 类型
+    def get_avss_params(self, n, t):
+        g, h = G1.rand(b'g'), G1.rand(b'h')
+        public_keys, private_keys = [None] * n, [None] * n
+        for i in range(n):
+            private_keys[i] = ZR.random()
+            public_keys[i] = pow(g, private_keys[i])
+        return g, h, public_keys, private_keys
+
     def add(self, program, **kwargs):
+        g, h, pks, sks = self.get_avss_params(self.N, self.t)
+        avss_tasks = [None] * self.N
+        dealer_id = randint(0, self.N - 1)
+        shares = [None] * self.N
+        acss_list = [None] * self.N
+
         for i in range(self.N):
-            context = Mpc(
+            mpc_instance = Mpc(
                 "mpc:%d" % (self.counter,),
                 self.N,
                 self.t,
                 i,
+                g,
+                h,
+                pks,
+                sks[i],
+                avss_tasks, 
+                dealer_id,
+                shares,
+                acss_list,
                 self.router.sends[i],
                 self.router.recvs[i],
                 program,
                 self.config,
                 **kwargs,
             )
-            self.tasks.append(self.loop.create_task(context._run()))
+            self.mpc_instances.append(mpc_instance)
+            self.tasks.append(self.loop.create_task(mpc_instance._run()))
         self.counter += 1
 
     async def join(self):
-        return await asyncio.gather(*self.tasks)
+        await asyncio.gather(*self.tasks)
+
+        outputs = await asyncio.gather(
+            *[mpc_instance.get_acss_output() for mpc_instance in self.mpc_instances]
+        )
+
+        print(f"outputs: {outputs}")
+        
+        shares = [None] * self.N
+        shares = [output[2] for output in outputs]
+
+        print(f"shares: {shares}")
+
+        
+
+        return outputs
+        # return await asyncio.gather(*self.tasks)
 
 
 ###############

@@ -6,10 +6,14 @@ import hashlib, time
 from math import ceil
 import logging
 from adkg.utils.bitmap import Bitmap
-from adkg.acss_ht import ACSS_HT
+from adkg.acss import ACSS
 
 from adkg.broadcast.tylerba import tylerba
 from adkg.broadcast.optqrbc import optqrbc
+
+from adkg.preprocessing import PreProcessedElements
+
+from adkg.mpc import TaskProgramRunner
 
 import logging
 logger = logging.getLogger(__name__)
@@ -51,6 +55,7 @@ class CP:
         e = self.dleq_derive_chal(x, a1, y, a2)
         return  e, w - e*alpha # return (challenge, response)
 
+# 这个就是他的零知识证明的代码
 class PoK:
     def __init__(self, g, ZR, multiexp):
         self.g  = g
@@ -77,13 +82,14 @@ class PoK:
         e = self.pok_derive_chal(x, a)
         return  e, w - e*alpha # return (challenge, response)
     
-class ADKG:
+class ADMPC:
     def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices):
         self.public_keys, self.private_key, self.g, self.h = (public_keys, private_key, g, h)
         self.n, self.t, self.deg, self.my_id = (n, t, deg, my_id)
         self.sc = ceil((deg+1)/(t+1)) + 1
         self.send, self.recv, self.pc = (send, recv, pc)
         self.ZR, self.G1, self.multiexp, self.dotprod = curve_params
+        print(f"type(self.ZR): {type(self.ZR)}")
         self.poly = polynomials_over(self.ZR)
         self.poly.clear_cache() #FIXME: Not sure why we need this.
         # Create a mechanism to split the `recv` channels based on `tag`
@@ -121,7 +127,7 @@ class ADKG:
     async def acss_step(self, outputs, values, acss_signal):
         acsstag = ADKGMsgType.ACSS
         acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
-        self.acss = ACSS_HT(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, acsssend, acssrecv, self.pc, self.ZR, self.G1)
+        self.acss = ACSS(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, acsssend, acssrecv, self.pc, self.ZR, self.G1)
         self.acss_tasks = [None] * self.n
         # 这里的话应该是 n-parallel ACSS，看一下怎么做到的
         for i in range(self.n):
@@ -133,6 +139,7 @@ class ADKG:
         while True:
             (dealer, _, shares, commitments) = await self.acss.output_queue.get()
             outputs[dealer] = {'shares':shares, 'commits':commitments}
+            # print("outputs: ", outputs[dealer])
             if len(outputs) >= self.n - self.t:
                 # print("Player " + str(self.my_id) + " Got shares from: " + str([output for output in outputs]))
                 acss_signal.set()
@@ -306,6 +313,7 @@ class ADKG:
         await rbc_signal.wait()
         rbc_signal.clear()
 
+        # 这一步是将所有 rbc_values 转化成一个公共子集 mks
         self.mks = set() # master key set
         for ks in  rbc_values:
             if ks is not None:
@@ -319,23 +327,67 @@ class ADKG:
                 await acss_signal.wait()
                 acss_signal.clear()
 
+        print("mks: ", self.mks)
+
+        # 为什么我们的 shares 会有两个呢，rand 对应的是 phi_hat, 那么 shares 就对应的是 phi ，那为什么会有两个呢
+        print("acss_outputs[0]['shares']['msg'][idx+1]: ", acss_outputs[0]['shares']['msg'])
+
+        # 这几步就是每个节点把 shares 随机数，还有承诺提取到这几个二维列表里
         secrets = [[self.ZR(0)]*self.n for _ in range(self.sc-1)]
         randomness = [[self.ZR(0)]*self.n for _ in range(self.sc-1)]
         commits = [[self.G1.identity()]*self.n for _ in range(self.sc-1)]
         for idx in range(self.sc-1):
             for node in range(self.n):
                 if node in self.mks:
+                    # 重点！！这里 secrets 存的是 idx+1 ，也就是有 phi_hat 对应的 那个 phi 多项式，而不是 Feldman 承诺的 k=0 那个多项式
                     secrets[idx][node] = acss_outputs[node]['shares']['msg'][idx+1]
+                    print(f"secret[{idx}][{node}] = {secrets[idx][node]}")
                     randomness[idx][node] = acss_outputs[node]['shares']['rand'][idx]
                     commits[idx][node] = acss_outputs[node]['commits'][idx+1][0]
         
     
         z_shares = [self.ZR(0)]*self.n
         r_shares = [self.ZR(0)]*self.n
+
+        sc_shares = []
+        for i in self.mks:
+            sc_shares.append([i+1, secrets[0][i]])
+
+        print(f"sc_shares: {sc_shares}")
+
+        res = self.poly.interpolate_at(sc_shares, 0)
+        print(f"{self.my_id} res: {res}")
+
+        # 这里测试的是两个 shares 的加法
+        test_add = secrets[0][0] + secrets[0][1]
+        print(f"{self.my_id} test_add: {test_add}")
+
+        # 这里测试的是两个 shares 的乘法
+        # pp = PreProcessedElements()
+        # pp.generate_triples(10, self.n, self.t)
+        # async def _prog(ctx):
+        #     for _ in range(10):
+        #         a_sh, b_sh, ab_sh = ctx.preproc.get_triples(ctx)
+        #         a, b, ab = await a_sh.open(), await b_sh.open(), await ab_sh.open()
+        #         assert a * b == ab
+
+        # program_runner = TaskProgramRunner(self.n, self.t)
+        # program_runner.add(_prog)
+        # await program_runner.join()
+        
+
+
         for i in range(self.n):
             for sec in range(self.sc-1):
+                # print("secrets[sec]: ", secrets[sec])
+                # z_shares[i] = z_shares[i] + secrets[sec][i]
+                print(f"self.matrix[{sec}][{i}]: {self.matrix[sec][i]}")
+                print(f"secrets[{sec}]: {secrets[sec]}")
+                # res = self.poly.interpolate_at(secrets[sec], 0)
+                # print(f"res: {res}")
                 z_shares[i] = z_shares[i] + self.dotprod(self.matrix[sec][i], secrets[sec])
                 r_shares[i] = r_shares[i] + self.dotprod(self.matrix[sec][i], randomness[sec])
+                
 
         
         # Sending PREKEY messages
@@ -358,8 +410,12 @@ class ADKG:
 
             # Interpolating the share
             if len(sk_shares) >= self.t+1:    
+                # 这里对应的插值是什么的插值，跟论文的哪个步骤对应，用到 online error-correcting 了吗
                 secret =  self.poly.interpolate_at(sk_shares, 0)
                 random =  self.poly.interpolate_at(rk_shares, 0)
+                print("my_id: ", self.my_id)
+                print("secret: ", secret)
+                print("random: ", random)
                 commit = self.G1.identity()
                 for sec in range(self.sc-1):
                     commit = commit*self.multiexp(commits[sec], self.matrix[sec][self.my_id])
@@ -372,6 +428,7 @@ class ADKG:
         gpok = PoK(self.g, self.ZR, self.multiexp)
         hpok = PoK(self.h, self.ZR, self.multiexp)
         gchal, gres = gpok.pok_prove(secret, mx)
+        # random 对应的是 phi_hat 那个多项式
         hchal, hres = hpok.pok_prove(random, my)
 
         keytag = ADKGMsgType.KEY
@@ -406,15 +463,28 @@ class ADKG:
         acss_signal = asyncio.Event()
 
         acss_start_time = time.time()
-        # values 的个数取决于 sc，sc 是什么目前还没看到，目前 values 设置的数量是 3 个
-        values =[self.ZR.rand() for _ in range(self.sc)]
+        # values 的个数取决于 sc，sc 是什么目前还没看到，目前 values 设置的数量是 2 个
+        # values =[self.ZR.rand() for _ in range(self.sc)]
+
+        values = [None] * self.sc
+        values[0] = self.ZR(2*(self.my_id+1)+3)
+        values[1] = self.ZR(2*(self.my_id+1)+3)
+        print("values: ", values)
+
         # 这一步是 acss 的过程
         self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
+        print("acss_outputs: ", acss_outputs)
         acss_time = time.time() - acss_start_time
         self.benchmark_logger.info(f"ACSS time: {(acss_time)}")
         key_proposal = list(acss_outputs.keys())
+
+        # 遍历字典并打印每个键和对应的值
+        for key, value in acss_outputs.items():
+            print(f"Key: {key}, Value: {value}")
+
+
         # 这一步是 MVBA 的过程
         create_acs_task = asyncio.create_task(self.agreement(key_proposal, acss_outputs, acss_signal))
         acs, key_task, work_tasks = await create_acs_task

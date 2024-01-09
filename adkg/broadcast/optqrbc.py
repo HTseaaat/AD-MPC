@@ -150,7 +150,9 @@ async def optqrbc(sid, pid, n, f, leader, predicate, input, output, send, receiv
                     logger.info(f"[{pid}] PROPOSE message from other than leader: {sender}")
                     continue
             
+                # print(f"leader_msg: {leader_msg}")
                 valid = await predicate(leader_msg)
+                # print(f"valid: {valid}")
                 if valid:
                     leader_hash = hash(leader_msg)
                     broadcast((RBCMsgType.ECHO, leader_hash))

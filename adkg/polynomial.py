@@ -6,8 +6,11 @@ from itertools import zip_longest
 from adkg.ntl import fft as fft_cpp
 from adkg.ntl import fft_interpolate as fft_interpolate_cpp
 
+from .betterpairing import ZR as bpZR
+from pypairing import ZR
 from .elliptic_curve import Subgroup
-from .field import GF
+from .field import GF, GFElement
+
 
 
 def strip_trailing_zeros(a):
@@ -36,9 +39,10 @@ def mysum(iterable):
 
 
 def polynomials_over(field):
-    # assert type(field) is GF or field == ZR or field == bpZR
-    # field_type = GFElement if type(field) is GF else field
-    field_type = field
+    print(f"type(field): {type(field)}")
+    assert type(field) is GF or field == ZR or field == bpZR
+    field_type = GFElement if type(field) is GF else field
+    # field_type = field
     if field in _poly_cache:
         return _poly_cache[field]
 
@@ -80,6 +84,8 @@ def polynomials_over(field):
             # shares are in the form (x, y=f(x))
             if type(x_recomb) is int:
                 x_recomb = field(x_recomb)
+            # print("type: ", type(x_recomb))
+            # print("field_type: ", field_type)
             assert type(x_recomb) is field_type
             xs, ys = zip(*shares)
             vector = []
@@ -157,6 +163,9 @@ def polynomials_over(field):
             if y0 is not None:
                 if type(y0) is int:
                     y0 = field(y0)
+
+                print(f"type(y0): {type(y0)}")
+                print(f"field_type: {field_type}")
                 assert type(y0) is field_type
                 coeffs[0] = y0
             return cls(coeffs)

@@ -12,9 +12,6 @@ class PolyCommitHybrid:
 
         return [self.multiexp([self.g, self.h], [phi.coeffs[i], phi_hat.coeffs[i]]) for i in range(len(phi.coeffs))]
 
-    def commit_alpha(self, alpha, alpha_hat): 
-        return self.multiexp([self.g, self.h], [alpha, alpha_hat])
-    
     def verify_eval(self, c, i, phi_at_i, phi_hat_at_i=None):
         powers = [self.ZR(i**j) for j in range(len(c))]
         lhs = self.multiexp(c, powers)
