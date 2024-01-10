@@ -473,7 +473,6 @@ class APREP:
         
         key_proposal = list(acss_outputs.keys())
 
-
         # 这一步是 MVBA 的过程
         create_acs_task = asyncio.create_task(self.agreement(key_proposal, acss_outputs, acss_signal))
         acs, key_task, work_tasks = await create_acs_task

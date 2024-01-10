@@ -353,6 +353,7 @@ class TaskProgramRunner(ProgramRunner):
         )
 
         print(f"outputs: {outputs}")
+        print(f"len rand_shares: {len(outputs[0][1])}")
         
         shares = [None] * self.N
         shares = [output[2] for output in outputs]
