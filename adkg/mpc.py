@@ -151,6 +151,7 @@ class Mpc(object):
 
         # Set up the buffer of received shares
         share_buffer = [self._share_buffers[i][shareid] for i in range(self.N)]
+        print(f"share_buffer: {share_buffer}")
 
         point = EvalPoint(self.field, self.N, use_omega_powers=False)
 
