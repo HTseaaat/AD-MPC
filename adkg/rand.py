@@ -435,7 +435,9 @@ class Rand:
 
     
     async def run_rand(self, w, rounds):
-        logging.info(f"Starting Rand for node {self.my_id}")
+        
+        
+        
         # 这里 acss_outputs 需要针对每一 round 对应不同的 acss_outputs
         # acss_outputs = []
         acss_outputs = {}
@@ -492,6 +494,5 @@ class Rand:
                 rand_shares = rand_shares + new_shares[i]
 
 
-        self.output_queue.put_nowait((mks, rand_shares))
+        self.output_queue.put_nowait(rand_shares)
         
-        logging.info(f"ADKG finished! Node {self.my_id}")

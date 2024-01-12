@@ -15,6 +15,9 @@ from adkg.preprocessing import PreProcessedElements
 
 from adkg.mpc import TaskProgramRunner
 from adkg.utils.serilization import Serial
+from adkg.rand import Rand
+from adkg.robust_rec import Robust_Rec
+import math
 
 import logging
 logger = logging.getLogger(__name__)
@@ -27,70 +30,17 @@ class ADKGMsgType:
     PREKEY = "P"
     KEY = "K"
     MASK = "M"
-    
-class CP:
-    def __init__(self, g, h, ZR):
-        self.g  = g
-        self.h = h
-        self.ZR = ZR
-
-    def dleq_derive_chal(self, x, y, a1, a2):
-        commit = str(x)+str(y)+str(a1)+str(a2)
-        try:
-            commit = commit.encode()
-        except AttributeError:
-            pass 
-        hs =  hashlib.sha256(commit).digest() 
-        return self.ZR.hash(hs)
-
-    def dleq_verify(self, x, y, chal, res):
-        a1 = self.multiexp([x, self.g],[chal, res])
-        a2 = self.multiexp([y, self.h],[chal, res])
-
-        eLocal = self.dleq_derive_chal(x, a1, y, a2)
-        return eLocal == chal
-
-    def dleq_prove(self, alpha, x, y):
-        w = self.ZR.random()
-        a1 = self.g**w
-        a2 = self.h**w
-        e = self.dleq_derive_chal(x, a1, y, a2)
-        return  e, w - e*alpha # return (challenge, response)
-
-# 这个就是他的零知识证明的代码
-class PoK:
-    def __init__(self, g, ZR, multiexp):
-        self.g  = g
-        self.ZR = ZR
-        self.multiexp = multiexp
-
-    def pok_derive_chal(self, x, a):
-        commit = str(x)+str(a)
-        try:
-            commit = commit.encode()
-        except AttributeError:
-            pass 
-        hs =  hashlib.sha256(commit).digest() 
-        return self.ZR.hash(hs)
-
-    def pok_verify(self, x, chal, res):
-        a = self.multiexp([x, self.g],[chal, res])
-        eLocal = self.pok_derive_chal(x, a)
-        return eLocal == chal
-
-    def pok_prove(self, alpha, x):
-        w = self.ZR.rand()
-        a = self.g**w
-        e = self.pok_derive_chal(x, a)
-        return  e, w - e*alpha # return (challenge, response)
+    GENRAND = "GR"
+    ROBUSTREC = "RR"
     
 class APREP:
-    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params):
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrix):
         self.public_keys, self.private_key, self.g, self.h = (public_keys, private_key, g, h)
         self.n, self.t, self.deg, self.my_id = (n, t, deg, my_id)
         self.sc = ceil((deg+1)/(t+1)) + 1
         self.send, self.recv, self.pc = (send, recv, pc)
         self.ZR, self.G1, self.multiexp, self.dotprod = curve_params
+        self.matrix = matrix
         # print(f"type(self.ZR): {type(self.ZR)}")
         self.poly = polynomials_over(self.ZR)
         self.poly.clear_cache() #FIXME: Not sure why we need this.
@@ -102,6 +52,11 @@ class APREP:
             return wrap_send(tag, send)
         self.get_send = _send
         self.output_queue = asyncio.Queue()
+
+        rectag = ADKGMsgType.ROBUSTREC
+        recsend, recrecv = self.get_send(rectag), self.subscribe_recv(rectag)
+        curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
+        self.rec = Robust_Rec(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, recsend, recrecv, self.pc, curve_params)
 
 
         self.benchmark_logger = logging.LoggerAdapter(
@@ -397,79 +352,182 @@ class APREP:
     # async def masked_values(): 
 
     
-    async def rbc_masked_step(self, rbc_masked_input): 
-        # print(f"{self.my_id} run the rbc masked step")
-        # print(f"{self.my_id} rbc_masked_input: {rbc_masked_input}")
+    
+    async def gen_rand_step(self, rand_num, rand_outputs, rand_signal):
+        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+        if rand_num > self.n - self.t: 
+            rounds = math.ceil(rand_num / (self. n - self.t))
+        else: 
+            rounds = 1
+        randtag = ADKGMsgType.GENRAND
+        randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+        curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
+        self.rand = Rand(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, randsend, randrecv, self.pc, curve_params, self.matrix)
+        self.rand_task = asyncio.create_task(self.rand.run_rand(rand_num, rounds))
 
-        rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
+        while True: 
+            rand_outputs = await self.rand.output_queue.get()
+
+            if len(rand_outputs) == rand_num: 
+                print(f"my id: {self.my_id} rand_outputs: {rand_outputs}")
+                rand_signal.set()
+                return rand_outputs
+            
+    async def robust_rec_step(self, rec_shares, rec_signal):        
         
-        async def predicate(serialized_masked_input):
-            return True
+        # self.rectask = asyncio.create_task(self.rec.run_robust_rec(0, rec_shares[0]))
+        
+        
+        self.rectasks = [None] * len(rec_shares)
+        for i in range(len(rec_shares)): 
+            self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec(i, rec_shares[i]))
+        rec_values = await asyncio.gather(*self.rectasks)
+        # rec_values = await self.rectasks[1]
+        print(f"my id: {self.my_id} rec_values: {rec_values}")
 
+        # for task in self.rectasks: 
+        #     task.cancel()
+           
+        # res = await self.rec.run_robust_rec(0, rec_shares[0])
+        # print(res)
+        # res1 = await self.rec.run_robust_rec(1, rec_shares[1])
+        # print(res1)
 
-        async def _setup(j):            
-            # starting RBC
-            rbctag =ADKGMsgType.MASK + str(j) # (M, msg)
-            rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        # 这里我给搞成顺序执行的了，后面需要改成并行执行
+        # rec_values = [None] * len(rec_shares)
+        # for i in range(len(rec_shares)): 
+        #     rec_values[i] = await self.rec.run_robust_rec(i, rec_shares[i])
+        #     print(f"my id: {self.my_id} here")
+            # print(f"rec_values[{i}]: {rec_values[i]}")
+        
+        # print(f"my id: {self.my_id} rec_values: {rec_values}")
+        rec_signal.set()
+        return rec_values
+        # rec_values = []
 
-            rbc_input = None
-            if j == self.my_id: 
-                riv = Bitmap(self.n)
-                riv.set_bit(j)
-                rbc_input = rbc_masked_input
-                # print(f"{self.my_id} rbc_input: {rbc_input}")
-
-            # rbc_outputs[j] = 
-            asyncio.create_task(
-                optqrbc(
-                    rbctag,
-                    self.my_id,
-                    self.n,
-                    self.t,
-                    j,
-                    predicate,
-                    rbc_input,
-                    rbc_outputs[j].put_nowait,
-                    rbcsend,
-                    rbcrecv,
-                )
-            )
-
-        await asyncio.gather(*[_setup(j) for j in range(self.n)])
-
-        # 这里存的是序列化的各方广播的 masked values and commitments
-        self.rbcl_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))    
+        # while True: 
+        #     rec_value = await self.rec.output_queue.get()
+        #     print(f"my id: {self.my_id} rec_outputs: {rec_value}")
+        #     rec_values.append(rec_value)
+        #     # rec_signal.set()
+        #     # return rec_values
+        #     if len(rec_values) == len(rec_shares):
+        #         print(f"my id: {self.my_id} rand_outputs: {rec_values}")
+        #         rec_signal.set()
+        #         return rec_values
+        
 
     
-    async def run_aprep(self, start_time):
+    async def robust_rec_step_test(self, rec_shares, rec_signal):        
+        
+        # self.rectask = asyncio.create_task(self.rec.run_robust_rec(0, rec_shares[0]))
+        
+        
+        self.rectasks = [None] * len(rec_shares)
+        for i in range(len(rec_shares)): 
+            self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec_test(i, rec_shares[i]))
+        rec_values = await asyncio.gather(*self.rectasks)
+        # rec_values = await self.rectasks[1]
+        print(f"my id: {self.my_id} rec_values: {rec_values}")
+
+        # for task in self.rectasks: 
+        #     task.cancel()
+           
+        # res = await self.rec.run_robust_rec(0, rec_shares[0])
+        # print(res)
+        # res1 = await self.rec.run_robust_rec(1, rec_shares[1])
+        # print(res1)
+
+        # 这里我给搞成顺序执行的了，后面需要改成并行执行
+        # rec_values = [None] * len(rec_shares)
+        # for i in range(len(rec_shares)): 
+        #     rec_values[i] = await self.rec.run_robust_rec(i, rec_shares[i])
+        #     print(f"my id: {self.my_id} here")
+            # print(f"rec_values[{i}]: {rec_values[i]}")
+        
+        # print(f"my id: {self.my_id} rec_values: {rec_values}")
+        rec_signal.set()
+        return rec_values
+    
+    async def run_aprep(self, cm):
         logging.info(f"Starting ADKG for node {self.my_id}")
+        
+        gen_rand_outputs = []
+        gen_rand_signal = asyncio.Event()
+
+        # 这里是调用 Protocol Rand 来生成随机数
+        gen_rand_outputs = await self.gen_rand_step(self.n*cm, gen_rand_outputs, gen_rand_signal)
+               
+
         acss_outputs = {}
         acss_signal = asyncio.Event()
 
-        acss_start_time = time.time()
-        # values 的个数取决于 sc，sc 是什么目前还没看到，目前 values 设置的数量是 2 个
-        # values =[self.ZR.rand() for _ in range(self.sc)]
 
-        # 这里 cm 就是下一层的乘法门数量
-        cm = 2
+
         # 每个参与方生成下一个 epoch 需要的乘法三元组
         mult_triples = [[self.ZR.rand() for _ in range(3)] for _ in range(cm)]
         chec_triples = [[self.ZR.rand() for _ in range(3)] for _ in range(cm)]
-        rand_values = [None] * cm
+        # rand_values = [None] * cm
         for i in range(cm): 
             mult_triples[i][2] = mult_triples[i][0] * mult_triples[i][1]
             chec_triples[i][2] = chec_triples[i][0] * chec_triples[i][1]
-            rand_values[i] = self.ZR.rand()
+            # rand_values[i] = self.ZR.rand()
 
-        aprep_values = (mult_triples, chec_triples, rand_values, cm)      
+        aprep_values = (mult_triples, chec_triples, cm)      
 
         # 这一步是 acss 的过程
         self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, aprep_values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
         # print("acss_outputs: ", acss_outputs)
-        acss_time = time.time() - acss_start_time
-        self.benchmark_logger.info(f"ACSS time: {(acss_time)}")
+
+        # 这两步可以放到调用 robust-rec 之前
+        await gen_rand_signal.wait()
+        gen_rand_signal.clear()
+
+        print(f"id: {self.my_id} gen_rand_outputs: {gen_rand_outputs}")
+
+        # 这里调用 Protocol Robust-Rec 来重构出刚才生成的随机数的原始值
+        # robust_rec_outputs = []
+        robust_rec_signal = asyncio.Event()
+
+        # 这里是调用 Protocol Rand 来生成随机数
+        robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, robust_rec_signal)
+
+        await robust_rec_signal.wait()
+        robust_rec_signal.clear()
+        print(f"robust_rec_outputs: {robust_rec_outputs}")
+
+        # 这一步我们需要用 chec_triples 来验证 mult_triples 中的三元组是否 c = a * b
+        # 这里 'msg' 表示的是 phis 集合，'rand' 表示的是 phis_hat 集合，phis[0] 里面的元素是 mult_triples，phis[1] 里面的元素是 chec_triples
+        # 这里 acss_outputs[n] 中的 n 代表的是不同节点提供的三元组
+        # print(f"acss_outputs[0]['shares']['msg'][0][0]: {acss_outputs[0]['shares']['msg'][0][0]}")
+        mult_triples_shares = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        chec_triples_shares = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        rands = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        for node in range(len(acss_outputs)): 
+            for i in range(cm): 
+                mult_triples_shares[node][i] = acss_outputs[node]['shares']['msg'][0][i]
+                chec_triples_shares[node][i] = acss_outputs[node]['shares']['msg'][1][i]
+                rands[node][i] = robust_rec_outputs[node*2+i]
+        # 这一步开始用 chec 三元组来计算 乘法三元组
+        rho = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        sigma = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        for node in range(len(acss_outputs)): 
+            for i in range(cm): 
+                rho[node][i] = rands[node][i] * mult_triples_shares[node][i][0] - chec_triples_shares[node][i][0]
+                sigma[node][i] = mult_triples_shares[node][i][1] - chec_triples_shares[node][i][1]
+        rho_list = []
+        sigma_list = []
+        for i in range(len(acss_outputs)): 
+            rho_list += rho[i]
+            sigma_list += sigma[i]
+        # 这里调用 Robust-Rec 协议重构 rho 和 sigma
+        robust_rho_signal = asyncio.Event()
+        robust_rec_rho = await self.robust_rec_step(rho_list, robust_rho_signal)
+        await robust_rho_signal.wait()
+        robust_rho_signal.clear()
+        print(f"robust_rec_rho: {robust_rec_rho}")
         
         key_proposal = list(acss_outputs.keys())
 
@@ -478,12 +536,10 @@ class APREP:
         acs, key_task, work_tasks = await create_acs_task
         await acs
         output = await key_task
-        adkg_time = time.time()-start_time
         await asyncio.gather(*work_tasks)
         # mks, sk, pk = output
         mks, new_shares = output
         # self.output_queue.put_nowait((values[1], mks, sk, pk))
         self.output_queue.put_nowait((mks, new_shares))
         
-        self.benchmark_logger.info("ADKG time: %f", adkg_time)
-        logging.info(f"ADKG finished! Node {self.my_id}, time: {adkg_time} (seconds)")
+        logging.info(f"ADKG finished! Node {self.my_id}")

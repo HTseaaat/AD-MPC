@@ -218,8 +218,8 @@ class ACSS:
         c_size = 32
 
         # deserializing commitments
-        # 这里的 3+3+1 指的是 乘法三元组中对应的三个 commits，验证三元组对应的 三个 commits，以及 随机数对应的 commits
-        com_size = g_size*(self.t+1)*(self.cm)*(3+3+1)
+        # 这里的 3+3+1 指的是 乘法三元组中对应的三个 commits，验证三元组对应的 三个 commits
+        com_size = g_size*(self.t+1)*(self.cm)*(3+3)
         # print(f"id: {self.my_id} proposal: {proposal[0:com_size]}")
         # 这里 commis_all 我们是按照 cm 进行划分的
         commits_all = self.sr.deserialize_gs(proposal[0:com_size])
@@ -237,10 +237,10 @@ class ACSS:
             for j in range(3): 
                 chec_triples_commits[i].append(commits_all[num*(self.t+1):(num+1)*(self.t+1)])
                 num += 1
-            rand_values_commits.append(commits_all[num*(self.t+1):(num+1)*(self.t+1)])
-            num += 1
+            # rand_values_commits.append(commits_all[num*(self.t+1):(num+1)*(self.t+1)])
+            # num += 1
 
-        commits = (mult_triples_commits, chec_triples_commits, rand_values_commits)
+        commits = (mult_triples_commits, chec_triples_commits)
         # print(f"mult_triples_commits: {mult_triples_commits}")
         # print(f"chec_triples_commits: {chec_triples_commits}")
         # print(f"rand_values_commits: {rand_values_commits}")
@@ -249,9 +249,9 @@ class ACSS:
         # IMPORTANT: Here 32 additional bytes are used in the ciphertext for padding
         # 这里解密我们也需要参照 commits 的反序列化方法
         # 这个 2 是从哪里来的，这里的 2 是多项式 phi 和 phi_hat 这两个，但是 ADKG k=0 时没有对应的 phi_hat 那么这里怎么能是 2 呢
-        ctx_size = (c_size*2*self.cm*(3+3+1)+c_size)*self.n
-        my_ctx_start = com_size + (c_size*2*self.cm*(3+3+1)+c_size)*self.my_id
-        my_ctx_end = my_ctx_start + c_size*2*self.cm*(3+3+1) + c_size
+        ctx_size = (c_size*2*self.cm*(3+3)+c_size)*self.n
+        my_ctx_start = com_size + (c_size*2*self.cm*(3+3)+c_size)*self.my_id
+        my_ctx_end = my_ctx_start + c_size*2*self.cm*(3+3) + c_size
         ctx_bytes = proposal[my_ctx_start:my_ctx_end]
         # print(f"id: {self.my_id} proposal1: {proposal[com_size:com_size+ctx_size]}")
 
@@ -331,7 +331,7 @@ class ACSS:
     def verify_proposal_aprep(self, dealer_id, dispersal_msg, commits, ephkey):
         shared_key = ephkey**self.private_key
 
-        mult_triples_commits, chec_triples_commits, rand_values_commits = commits
+        mult_triples_commits, chec_triples_commits = commits
 
         # 第一层嵌套的数组表示有几个 三元组，第二层嵌套的数组表示三元组中某个元素的承诺，第三层嵌套表示的是具体到三元组中某个元素的多项式承诺的具体系数
         # print(f"mult_triples_commits[0]: {mult_triples_commits[0]}")
@@ -353,8 +353,8 @@ class ACSS:
         phi_mult_triples_hat_si_list = shares[self.cm*3:self.cm*3*2]
         phi_chec_triples_si_list = shares[self.cm*3*2:self.cm*3*3]
         phi_chec_triples_hat_si_list = shares[self.cm*3*3:self.cm*3*4]
-        phi_rand_values_si = shares[self.cm*3*4:self.cm*3*4+self.cm]
-        phi_rand_values_hat_si = shares[self.cm*3*4+self.cm:self.cm*3*4+self.cm*2]
+        # phi_rand_values_si = shares[self.cm*3*4:self.cm*3*4+self.cm]
+        # phi_rand_values_hat_si = shares[self.cm*3*4+self.cm:self.cm*3*4+self.cm*2]
 
         phi_mult_triples_si = [[] for _ in range(self.cm)]
         phi_mult_triples_hat_si = [[] for _ in range(self.cm)]
@@ -381,14 +381,14 @@ class ACSS:
                 if not self.poly_commit.verify_eval(chec_triples_commits[i][j], self.my_id + 1, phi_chec_triples_si[i][j], phi_chec_triples_hat_si[i][j]): 
                     self.acss_status[dealer_id] = False
                     return False
-            if not self.poly_commit.verify_eval(rand_values_commits[i], self.my_id + 1, phi_rand_values_si[i], phi_rand_values_hat_si[i]): 
-                self.acss_status[dealer_id] = False
-                return False      
+            # if not self.poly_commit.verify_eval(rand_values_commits[i], self.my_id + 1, phi_rand_values_si[i], phi_rand_values_hat_si[i]): 
+            #     self.acss_status[dealer_id] = False
+            #     return False      
             
         
         self.acss_status[dealer_id] = True
-        phis = (phi_mult_triples_si, phi_chec_triples_si, phi_rand_values_si)
-        phis_hat = (phi_mult_triples_hat_si, phi_chec_triples_hat_si, phi_rand_values_hat_si)
+        phis = (phi_mult_triples_si, phi_chec_triples_si)
+        phis_hat = (phi_mult_triples_hat_si, phi_chec_triples_hat_si)
         self.data[dealer_id] = [commits, phis, phis_hat, ephkey, shared_key]
         return True
     
@@ -713,19 +713,18 @@ class ACSS:
             values.append(0)
         """
         # 这里分两种情况，values 是 trans 协议来的或者是 aprep 协议来的
-        if len(values) == 4:
-            mult_triples, chec_triples, rand_values, self.cm = values
+        mult_triples, chec_triples, self.cm = values
 
         # 这里 phi 和 phi_hat 都是根据 sc 来的
         phi_mult_triples = [[None for _ in range(3)] for _ in range(self.cm)]
         phi_mult_triples_hat = [[None for _ in range(3)] for _ in range(self.cm)]
         phi_chec_triples = [[None for _ in range(3)] for _ in range(self.cm)]
         phi_chec_triples_hat = [[None for _ in range(3)] for _ in range(self.cm)]
-        phi_rand_values = [None] * self.cm
-        phi_rand_values_hat = [None] * self.cm
+        # phi_rand_values = [None] * self.cm
+        # phi_rand_values_hat = [None] * self.cm
         commit_mult_triples = [[None for _ in range(3)] for _ in range(self.cm)]
         commit_chec_triples = [[None for _ in range(3)] for _ in range(self.cm)]
-        commit_rand_values = [None] * self.cm
+        # commit_rand_values = [None] * self.cm
 
         # BatchPolyCommit
         #   Cs  <- BatchPolyCommit(SP,φ(·,k))
@@ -740,9 +739,9 @@ class ACSS:
                 phi_chec_triples_hat[i][j] = self.poly.random(self.t, self.field.rand())
                 commit_mult_triples[i][j] = self.poly_commit.commit(phi_mult_triples[i][j], phi_mult_triples_hat[i][j])
                 commit_chec_triples[i][j] = self.poly_commit.commit(phi_chec_triples[i][j], phi_chec_triples_hat[i][j])
-            phi_rand_values[i] = self.poly.random(self.t, rand_values[i])
-            phi_rand_values_hat[i] = self.poly.random(self.t, self.field.rand())
-            commit_rand_values[i] = self.poly_commit.commit(phi_rand_values[i], phi_rand_values_hat[i])
+            # phi_rand_values[i] = self.poly.random(self.t, rand_values[i])
+            # phi_rand_values_hat[i] = self.poly.random(self.t, self.field.rand())
+            # commit_rand_values[i] = self.poly_commit.commit(phi_rand_values[i], phi_rand_values_hat[i])
         
 
         ephemeral_secret_key = self.field.rand()
@@ -760,8 +759,8 @@ class ACSS:
             phi_mult_triples_hat_si = [[phi_mult_triples_hat[j][k](i+1) for k in range(3)] for j in range(self.cm)]
             phi_chec_triples_si = [[phi_chec_triples[j][k](i+1) for k in range(3)] for j in range(self.cm)]
             phi_chec_triples_hat_si = [[phi_chec_triples_hat[j][k](i+1) for k in range(3)] for j in range(self.cm)]
-            phi_rand_values_si = [phi_rand_values[k](i + 1) for k in range(self.cm)]
-            phi_rand_values_hat_si = [phi_rand_values_hat[k](i + 1) for k in range(self.cm)]
+            # phi_rand_values_si = [phi_rand_values[k](i + 1) for k in range(self.cm)]
+            # phi_rand_values_hat_si = [phi_rand_values_hat[k](i + 1) for k in range(self.cm)]
 
             # 这里测试一下每个点的评估值是否和承诺是对应的
             # for x in range(self.cm):
@@ -786,7 +785,7 @@ class ACSS:
             
             ciphertext = SymmetricCrypto.encrypt(shared_key.__getstate__(), self.sr.serialize_fs(phi_mult_triples_si_list+ phi_mult_triples_hat_si_list
                                                                                                  +phi_chec_triples_si_list+phi_chec_triples_hat_si_list
-                                                                                                 +phi_rand_values_si+phi_rand_values_hat_si))
+                                                                                                 ))
             # print(f"i: {i} ciphertext: {ciphertext}")
             # ctx_size = self.sr.f_size*3*self.cm*(3+3+1)
             # print(f"i: {i} ciphertext1: {ciphertext[0:ctx_size]}")
@@ -800,7 +799,7 @@ class ACSS:
             for j in range(3): 
                 mult_list += commit_mult_triples[i][j]
                 chec_list += commit_chec_triples[i][j]
-            g_commits = g_commits + mult_list + chec_list + commit_rand_values[i]
+            g_commits = g_commits + mult_list + chec_list
 
         datab = self.sr.serialize_gs(g_commits) # Serializing commitments
         # print(f"id: {self.my_id} datab: {datab}")
@@ -811,9 +810,9 @@ class ACSS:
         datab.extend(self.sr.serialize_g(ephemeral_public_key))
         # print(f"len datab: {len(datab)}")
         # print(f"id: {self.my_id} datab3: {datab}")
-        com_size = self.sr.g_size*(self.t+1)*(self.cm)*(3+3+1)
-        ctx_size = self.sr.f_size*2*self.cm*(3+3+1)+self.sr.f_size
-        tem_size = ctx_size * 4
+        # com_size = self.sr.g_size*(self.t+1)*(self.cm)*(3+3+1)
+        # ctx_size = self.sr.f_size*2*self.cm*(3+3+1)+self.sr.f_size
+        # tem_size = ctx_size * 4
         # print(f"datab4: {datab[com_size:com_size + tem_size]}")
         # print(f"datab5: {datab[com_size+tem_size:]}")
 
