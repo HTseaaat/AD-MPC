@@ -84,7 +84,7 @@ async def prog(ctx):
     pc = PolyCommitHybrid(g, h, ZR, multiexp)
 
     # w 是需要生成的随机数的数量
-    w = 5
+    w = 3
 
     if w > n - t: 
         rounds = math.ceil(w / (n - t))

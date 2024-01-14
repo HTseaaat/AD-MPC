@@ -105,7 +105,7 @@ class APREP:
             if len(outputs) == self.n:
                 return    
 
-    async def commonsubset(self, rbc_out, acss_outputs, acss_signal, rbc_signal, rbc_values, coin_keys, aba_in, aba_out):
+    async def commonsubset(self, rbc_out, mult_triples_shares, rec_tau, cm, rbc_signal, rbc_values, coin_keys, aba_in, aba_out):
         assert len(rbc_out) == self.n
         assert len(aba_in) == self.n
         assert len(aba_out) == self.n
@@ -114,14 +114,10 @@ class APREP:
         aba_values = [0]*self.n
 
         async def _recv_rbc(j):
-            # rbc_values[j] = await rbc_out[j]
             rbcl = await rbc_out[j].get()
-            # print(f"rbcl: {rbcl}")
             rbcb = Bitmap(self.n, rbcl)
-            # print(f"rbcb: {rbcb}")
             rbc_values[j] = []
-            # for i in range(self.n): 
-            #     print(f"{self.my_id} receives {i} {rbcb.get_bit(i)}")
+          
             for i in range(self.n):
                 if rbcb.get_bit(i):
                     rbc_values[j].append(i)
@@ -133,14 +129,10 @@ class APREP:
             
             subset = True
             while True:
-                acss_signal.clear()
-                for k in rbc_values[j]:
-                    if k not in acss_outputs.keys():
-                        subset = False
+                
                 if subset:
-                    coin_keys[j]((acss_outputs, rbc_values[j]))
+                    coin_keys[j]((mult_triples_shares, rbc_values[j]))
                     return
-                await acss_signal.wait()
 
         r_threads = [asyncio.create_task(_recv_rbc(j)) for j in range(self.n)]
 
@@ -169,7 +161,7 @@ class APREP:
 
         rbc_signal.set()
     
-    async def agreement(self, key_proposal, acss_outputs, acss_signal):
+    async def agreement(self, key_proposal, mult_triples_shares, rec_tau, cm):
         aba_inputs = [asyncio.Queue() for _ in range(self.n)]
         aba_outputs = [asyncio.Queue() for _ in range(self.n)]
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
@@ -187,14 +179,15 @@ class APREP:
         
             while True:
                 subset = True
+                # 这里是检查收到的来自其他节点的 key_proposal 跟自己的是否一致
                 for kk in kpl:
-                    if kk not in acss_outputs.keys():
-                        subset = False
+                    for i in range(cm): 
+                        if rec_tau[kk][i] != self.ZR(0): 
+                            subset = False
+                    
                 if subset:
-                    acss_signal.clear()    
                     return True
-                acss_signal.clear()
-                await acss_signal.wait()
+                
 
         async def _setup(j):
             
@@ -259,24 +252,25 @@ class APREP:
         return (
             self.commonsubset(
                 rbc_outputs,
-                acss_outputs,
-                acss_signal,
+                mult_triples_shares,
+                rec_tau,
+                cm,
                 rbc_signal,
                 rbc_values,
                 [_.put_nowait for _ in coin_keys],
                 [_.put_nowait for _ in aba_inputs],
                 [_.get for _ in aba_outputs],
             ),
-            self.new_share(
-                acss_outputs,
-                acss_signal,
+            self.new_triples(
+                mult_triples_shares,
+                cm,
                 rbc_values,
                 rbc_signal,
             ),
             work_tasks,
         )
 
-    async def new_share(self, acss_outputs, acss_signal, rbc_values, rbc_signal):
+    async def new_triples(self, mult_triples_shares, cm, rbc_values, rbc_signal):
         await rbc_signal.wait()
         rbc_signal.clear()
 
@@ -288,69 +282,118 @@ class APREP:
                 self.mks = self.mks.union(set(list(ks)))
                 if len(self.mks) >= self.n-self.t:
                     break
+        T_list = list(self.mks)
+        # 这里就是协议的第三步，从每个参与方提供的 三元组 中提取随机化后的三元组
+        # 这里跟需要根据我们共识的集合 T_list 来插值出新的三元组 (u,v,w)
+        # 这里对应协议的 step 13
+        u = [[self.ZR(0) for _ in range(2*self.t+1)] for _ in range(cm)]
+        v = [[self.ZR(0) for _ in range(2*self.t+1)] for _ in range(cm)]
+        w = [[self.ZR(0) for _ in range(2*self.t+1)] for _ in range(cm)]
+        # 这里 u v w 的行代表 cm ,列代表不同节点的三元组中的元素
+        for i in range(cm): 
+            for j in range(self.t+1): 
+                index = T_list[j]
+                u[i][j] = mult_triples_shares[index][i][0]
+                v[i][j] = mult_triples_shares[index][i][1]
+                w[i][j] = mult_triples_shares[index][i][2]
         
-        # Waiting for all ACSS to terminate
-        for k in self.mks:
-            if k not in acss_outputs:
-                await acss_signal.wait()
-                acss_signal.clear()
+        u_poly, v_poly, w_poly = [], [], []
+        for i in range(cm):
+            u_poly.append([])
+            v_poly.append([])
+            # w_poly.append([])
+            for j in range(self.t+1): 
+                u_poly[i].append([T_list[j]+1, u[i][j]])
+                v_poly[i].append([T_list[j]+1, v[i][j]])
+                # w_poly[i].append([T_list[j]+1, w[i][j]])
+            
+        # 这里对应协议的 step 14
+        for i in range(cm):
+            for j in range(self.t+1, 2*self.t+1): 
+                index = T_list[j] + 1
+                u[i][j] = self.poly.interpolate_at(u_poly[i], index)
+                v[i][j] = self.poly.interpolate_at(v_poly[i], index)
 
-        # print("mks: ", self.mks)
+        # 这里对应协议的 step 15
+        d = [[self.ZR(0) for _ in range(self.t)] for _ in range(cm)]
+        e = [[self.ZR(0) for _ in range(self.t)] for _ in range(cm)]  
+        for i in range(cm):
+            for j in range(self.t): 
+                index1 = j + self.t + 1
+                index2 = T_list[index1]
+                d[i][j] = u[i][index1] - mult_triples_shares[index2][i][0]
+                e[i][j] = v[i][index1] - mult_triples_shares[index2][i][1]
+            
 
-        # 为什么我们的 shares 会有两个呢，rand 对应的是 phi_hat, 那么 shares 就对应的是 phi ，那为什么会有两个呢
-        # print("acss_outputs[0]['shares']['msg'][idx+1]: ", acss_outputs[0]['shares']['msg'])
-
-        # 这几步就是每个节点把 shares 随机数，还有承诺提取到这几个二维列表里
-        secrets = [[self.ZR(0)]*self.n for _ in range(self.sc-1)]
-        randomness = [[self.ZR(0)]*self.n for _ in range(self.sc-1)]
-        commits = [[self.G1.identity()]*self.n for _ in range(self.sc-1)]
-        for idx in range(self.sc-1):
-            for node in range(self.n):
-                if node in self.mks:
-                    # 重点！！这里 secrets 存的是 idx+1 ，也就是有 phi_hat 对应的 那个 phi 多项式，而不是 Feldman 承诺的 k=0 那个多项式
-                    secrets[idx][node] = acss_outputs[node]['shares']['msg'][idx+1]
-                    # print(f"secret[{idx}][{node}] = {secrets[idx][node]}")
-                    randomness[idx][node] = acss_outputs[node]['shares']['rand'][idx]
-                    # print(f"randomness[{idx}][{node}] = {randomness[idx][node]}")
-                    commits[idx][node] = acss_outputs[node]['commits'][idx+1][0]
-                    # print(f"commits[{idx}][{node}] = {commits[idx][node]}")
+        # 这里对应协议的 step 16
+        d_list, e_list = [], []
+        for i in range(cm): 
+            d_list += d[i]
+            e_list += e[i]
+        robust_rec_sig = asyncio.Event()
+        robust_rec_d = await self.robust_rec_step(d_list, robust_rec_sig)
+        await robust_rec_sig.wait()
+        robust_rec_sig.clear()    
+        robust_rec_e = await self.robust_rec_step(e_list, robust_rec_sig)
+        await robust_rec_sig.wait()
+        robust_rec_sig.clear()   
         
-    
-        z_shares = [self.ZR(0)]*self.n
-        r_shares = [self.ZR(0)]*self.n
+        rec_d = [[self.ZR(0) for _ in range(self.t)] for _ in range(cm)]
+        rec_e = [[self.ZR(0) for _ in range(self.t)] for _ in range(cm)]
+        for i in range(cm):
+            for j in range(self.t): 
+                rec_d[i][j] = robust_rec_d[i*self.t+j]
+                rec_e[i][j] = robust_rec_e[i*self.t+j]
 
-        sc_shares = []
-        for i in self.mks:
-            sc_shares.append([i+1, secrets[0][i]])
+        # 这里对应协议的 step 17    
+        for i in range(cm):
+            for j in range(self.t): 
+                index1 = j + self.t + 1
+                index2 = T_list[index1]
+                w[i][index1] = rec_d[i][j] * rec_e[i][j] + rec_d[i][j] * mult_triples_shares[index2][i][1] + rec_e[i][j] * mult_triples_shares[index2][i][0] + mult_triples_shares[index2][i][2]
 
-        # print(f"sc_shares: {sc_shares}")
+        # 这里对应协议的 step 18
+        for i in range(cm):
+            w_poly.append([])
+            for j in range(2*self.t+1): 
+                w_poly[i].append([T_list[j]+1, w[i][j]])
+        u_point, v_point, w_point = [None] * cm, [None] * cm, [None] * cm
+        for i in range(cm):
+            point = 3 * self.t + 2
+            u_point[i] = self.poly.interpolate_at(u_poly[i], point)
+            v_point[i] = self.poly.interpolate_at(v_poly[i], point)
+            w_point[i] = self.poly.interpolate_at(w_poly[i], point)
 
-        # 这里测试的就是在得到公共子集之后重构新的 shares 
-        res = self.poly.interpolate_at(sc_shares, 0)
-        # print(f"{self.my_id} res: {res}")
+        aprep_triples = []
+        for i in range(cm): 
+            aprep_triples.append([])
+            aprep_triples[i].append(u_point[i])
+            aprep_triples[i].append(v_point[i])
+            aprep_triples[i].append(w_point[i])
+            
+        # 测试代码，测试 w == u * v
+        # u_point_list, v_point_list, w_point_list = [], [], []
+        # for i in range(1): 
+        #     u_point_list.append(u_point[i])
+        #     v_point_list.append(v_point[i])
+        #     w_point_list.append(w_point[i])
+        
+        # robust_rec_u = await self.robust_rec_step(u_point_list, robust_rec_sig)
+        # await robust_rec_sig.wait()
+        # robust_rec_sig.clear()
+        # robust_rec_v = await self.robust_rec_step(v_point_list, robust_rec_sig)
+        # await robust_rec_sig.wait()
+        # robust_rec_sig.clear()
+        # robust_rec_w = await self.robust_rec_step(w_point_list, robust_rec_sig)
+        # await robust_rec_sig.wait()
+        # robust_rec_sig.clear()
+        # if robust_rec_w[0] == robust_rec_u[0] * robust_rec_v[0]:
+        #     print(f"pass")
+        # else: 
+        #     print(f"false")
 
-        # 这里测试的是两个 shares 的加法
-        test_add = secrets[0][0] + secrets[0][1]
-        # print(f"{self.my_id} test_add: {test_add}")
-
-        # 这里测试的是两个 shares 的乘法
-        # pp = PreProcessedElements()
-        # pp.generate_triples(10, self.n, self.t)
-        # async def _prog(ctx):
-        #     for _ in range(10):
-        #         a_sh, b_sh, ab_sh = ctx.preproc.get_triples(ctx)
-        #         a, b, ab = await a_sh.open(), await b_sh.open(), await ab_sh.open()
-        #         assert a * b == ab
-
-        # program_runner = TaskProgramRunner(self.n, self.t)
-        # program_runner.add(_prog)
-        # await program_runner.join()
-    
-        # return (self.mks, secret, pk)
-        return (self.mks, res)
-
-    # async def masked_values(): 
-
+        
+        return aprep_triples
     
     
     async def gen_rand_step(self, rand_num, rand_outputs, rand_signal):
@@ -373,81 +416,17 @@ class APREP:
                 rand_signal.set()
                 return rand_outputs
             
-    async def robust_rec_step(self, rec_shares, rec_signal):        
-        
-        # self.rectask = asyncio.create_task(self.rec.run_robust_rec(0, rec_shares[0]))
-        
+    async def robust_rec_step(self, rec_shares, rec_signal):                
         
         self.rectasks = [None] * len(rec_shares)
         for i in range(len(rec_shares)): 
             self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec(i, rec_shares[i]))
         rec_values = await asyncio.gather(*self.rectasks)
-        # rec_values = await self.rectasks[1]
         print(f"my id: {self.my_id} rec_values: {rec_values}")
 
-        # for task in self.rectasks: 
-        #     task.cancel()
-           
-        # res = await self.rec.run_robust_rec(0, rec_shares[0])
-        # print(res)
-        # res1 = await self.rec.run_robust_rec(1, rec_shares[1])
-        # print(res1)
-
-        # 这里我给搞成顺序执行的了，后面需要改成并行执行
-        # rec_values = [None] * len(rec_shares)
-        # for i in range(len(rec_shares)): 
-        #     rec_values[i] = await self.rec.run_robust_rec(i, rec_shares[i])
-        #     print(f"my id: {self.my_id} here")
-            # print(f"rec_values[{i}]: {rec_values[i]}")
-        
-        # print(f"my id: {self.my_id} rec_values: {rec_values}")
         rec_signal.set()
         return rec_values
-        # rec_values = []
-
-        # while True: 
-        #     rec_value = await self.rec.output_queue.get()
-        #     print(f"my id: {self.my_id} rec_outputs: {rec_value}")
-        #     rec_values.append(rec_value)
-        #     # rec_signal.set()
-        #     # return rec_values
-        #     if len(rec_values) == len(rec_shares):
-        #         print(f"my id: {self.my_id} rand_outputs: {rec_values}")
-        #         rec_signal.set()
-        #         return rec_values
         
-
-    
-    async def robust_rec_step_test(self, rec_shares, rec_signal):        
-        
-        # self.rectask = asyncio.create_task(self.rec.run_robust_rec(0, rec_shares[0]))
-        
-        
-        self.rectasks = [None] * len(rec_shares)
-        for i in range(len(rec_shares)): 
-            self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec_test(i, rec_shares[i]))
-        rec_values = await asyncio.gather(*self.rectasks)
-        # rec_values = await self.rectasks[1]
-        print(f"my id: {self.my_id} rec_values: {rec_values}")
-
-        # for task in self.rectasks: 
-        #     task.cancel()
-           
-        # res = await self.rec.run_robust_rec(0, rec_shares[0])
-        # print(res)
-        # res1 = await self.rec.run_robust_rec(1, rec_shares[1])
-        # print(res1)
-
-        # 这里我给搞成顺序执行的了，后面需要改成并行执行
-        # rec_values = [None] * len(rec_shares)
-        # for i in range(len(rec_shares)): 
-        #     rec_values[i] = await self.rec.run_robust_rec(i, rec_shares[i])
-        #     print(f"my id: {self.my_id} here")
-            # print(f"rec_values[{i}]: {rec_values[i]}")
-        
-        # print(f"my id: {self.my_id} rec_values: {rec_values}")
-        rec_signal.set()
-        return rec_values
     
     async def run_aprep(self, cm):
         logging.info(f"Starting ADKG for node {self.my_id}")
@@ -462,7 +441,16 @@ class APREP:
         acss_outputs = {}
         acss_signal = asyncio.Event()
 
-
+        # 这里是测试代码，假设 (a,b,c)=(1,2,2) (x,y,z)=(2,3,6) cm=1
+        # mult_triples = [[self.ZR.rand() for _ in range(3)] for _ in range(cm)]
+        # chec_triples = [[self.ZR.rand() for _ in range(3)] for _ in range(cm)]
+        # mult_triples[0][0] = self.ZR(1)
+        # mult_triples[0][1] = self.ZR(2)
+        # chec_triples[0][0] = self.ZR(2)
+        # chec_triples[0][1] = self.ZR(3)
+        # for i in range(cm): 
+        #     mult_triples[i][2] = mult_triples[i][0] * mult_triples[i][1]
+        #     chec_triples[i][2] = chec_triples[i][0] * chec_triples[i][1]
 
         # 每个参与方生成下一个 epoch 需要的乘法三元组
         mult_triples = [[self.ZR.rand() for _ in range(3)] for _ in range(cm)]
@@ -471,7 +459,6 @@ class APREP:
         for i in range(cm): 
             mult_triples[i][2] = mult_triples[i][0] * mult_triples[i][1]
             chec_triples[i][2] = chec_triples[i][0] * chec_triples[i][1]
-            # rand_values[i] = self.ZR.rand()
 
         aprep_values = (mult_triples, chec_triples, cm)      
 
@@ -485,18 +472,17 @@ class APREP:
         await gen_rand_signal.wait()
         gen_rand_signal.clear()
 
-        print(f"id: {self.my_id} gen_rand_outputs: {gen_rand_outputs}")
+        # print(f"id: {self.my_id} gen_rand_outputs: {gen_rand_outputs}")
 
         # 这里调用 Protocol Robust-Rec 来重构出刚才生成的随机数的原始值
         # robust_rec_outputs = []
         robust_rec_signal = asyncio.Event()
 
-        # 这里是调用 Protocol Rand 来生成随机数
         robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, robust_rec_signal)
 
         await robust_rec_signal.wait()
         robust_rec_signal.clear()
-        print(f"robust_rec_outputs: {robust_rec_outputs}")
+        # print(f"robust_rec_outputs: {robust_rec_outputs}")
 
         # 这一步我们需要用 chec_triples 来验证 mult_triples 中的三元组是否 c = a * b
         # 这里 'msg' 表示的是 phis 集合，'rand' 表示的是 phis_hat 集合，phis[0] 里面的元素是 mult_triples，phis[1] 里面的元素是 chec_triples
@@ -509,30 +495,68 @@ class APREP:
             for i in range(cm): 
                 mult_triples_shares[node][i] = acss_outputs[node]['shares']['msg'][0][i]
                 chec_triples_shares[node][i] = acss_outputs[node]['shares']['msg'][1][i]
-                rands[node][i] = robust_rec_outputs[node*2+i]
+                rands[node][i] = robust_rec_outputs[node*cm+i]
         # 这一步开始用 chec 三元组来计算 乘法三元组
+        # print(f"my id: {self.my_id} mult_triples_shares[0][0]: {mult_triples_shares[0][0]}")
         rho = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         sigma = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         for node in range(len(acss_outputs)): 
             for i in range(cm): 
                 rho[node][i] = rands[node][i] * mult_triples_shares[node][i][0] - chec_triples_shares[node][i][0]
                 sigma[node][i] = mult_triples_shares[node][i][1] - chec_triples_shares[node][i][1]
+                # sigma[node][i] = chec_triples_shares[node][i][1] - mult_triples_shares[node][i][1]
         rho_list = []
         sigma_list = []
         for i in range(len(acss_outputs)): 
             rho_list += rho[i]
             sigma_list += sigma[i]
         # 这里调用 Robust-Rec 协议重构 rho 和 sigma
-        robust_rho_signal = asyncio.Event()
-        robust_rec_rho = await self.robust_rec_step(rho_list, robust_rho_signal)
-        await robust_rho_signal.wait()
-        robust_rho_signal.clear()
-        print(f"robust_rec_rho: {robust_rec_rho}")
+        robust_rec_rho = await self.robust_rec_step(rho_list, robust_rec_signal)
+        await robust_rec_signal.wait()
+        robust_rec_signal.clear()
+        robust_rec_sigma = await self.robust_rec_step(sigma_list, robust_rec_signal)
+        await robust_rec_signal.wait()
+        robust_rec_signal.clear() 
+        # print(f"robust_rec_rho: {robust_rec_rho}")
+
+        rec_rho = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        rec_sigma = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        for node in range(len(acss_outputs)): 
+            for i in range(cm): 
+                rec_rho[node][i] = robust_rec_rho[node*cm+i]
+                rec_sigma[node][i] = robust_rec_sigma[node*cm+i]
         
-        key_proposal = list(acss_outputs.keys())
+        # 下面是计算 \tau 并调用 protocol Robust-Rec 来重构 \tau 检测是否等于 0
+        tau = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        for node in range(len(acss_outputs)): 
+            for i in range(cm): 
+                tau[node][i] = rands[node][i] * mult_triples_shares[node][i][2] - chec_triples_shares[node][i][2] - rec_sigma[node][i] * chec_triples_shares[node][i][0] - rec_rho[node][i] * chec_triples_shares[node][i][1] - rec_rho[node][i] * rec_sigma[node][i]
+        # print(f"tau[0][0]: {tau[0][0]}")
+        tau_list = []
+        for i in range(len(acss_outputs)): 
+            tau_list += tau[i]
+        robust_rec_tau = await self.robust_rec_step(tau_list, robust_rec_signal)
+        await robust_rec_signal.wait()
+        robust_rec_signal.clear()
+        print(f"robust_rec_tau: {robust_rec_tau}")
+        rec_tau = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
+        for node in range(len(acss_outputs)): 
+            for i in range(cm): 
+                rec_tau[node][i] = robust_rec_tau[node*cm+i]
+        print(f"rec_tau: {rec_tau}")
+
+        # 这里检查 \tau 是否等于0，如果等于0，就放到 key_proposal 中
+        key_proposal = []
+        for node in range(len(acss_outputs)): 
+            for i in range(cm): 
+                if rec_tau[node][i] != self.ZR(0):
+                    break
+            key_proposal.append(node)
+        print(f"key_proposal: {key_proposal}")
+        
 
         # 这一步是 MVBA 的过程
-        create_acs_task = asyncio.create_task(self.agreement(key_proposal, acss_outputs, acss_signal))
+        create_acs_task = asyncio.create_task(self.agreement(key_proposal, mult_triples_shares, rec_tau, cm))
         acs, key_task, work_tasks = await create_acs_task
         await acs
         output = await key_task

@@ -449,6 +449,8 @@ class Rand:
         # 改变一下策略，让每个参与方一次性 acss rounds 个随机数
         self.rand_num = rounds
         values = [self.ZR.rand() for _ in range(rounds)]
+        # 这里是测试代码，假设所有values = 2
+        # values = [self.ZR(2) for _ in range(rounds)]
         self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
