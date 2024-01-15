@@ -12,7 +12,8 @@ class PolyCommitHybrid:
 
         return [self.multiexp([self.g, self.h], [phi.coeffs[i], phi_hat.coeffs[i]]) for i in range(len(phi.coeffs))]
 
-    def commit_alpha(self, alpha, alpha_hat): 
+    # 这里的函数是专门为 protocol Trans 的 step 4 生成单个承诺用的
+    def commit_trans(self, alpha, alpha_hat): 
         return self.multiexp([self.g, self.h], [alpha, alpha_hat])
     
     def verify_eval(self, c, i, phi_at_i, phi_hat_at_i=None):

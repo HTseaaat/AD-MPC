@@ -17,7 +17,6 @@ class Serial:
         return g.__getstate__()
 
     def deserialize_g(self, data):
-        print(f"{len(data)//self.g_size}")
         g = self.G1()
         g.__setstate__(data)
         return g

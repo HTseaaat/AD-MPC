@@ -372,80 +372,14 @@ class Rand:
                 z_shares[i][j] = self.dotprod(self.matrix[j], secrets[i])
                 # r_shares[i][j] = self.dotprod(self.matrix[j], randomness[i])
         return (self.mks, z_shares)
-        
-
-        # sc_shares = []
-        # for i in self.mks:
-        #     sc_shares.append([i+1, secrets[0][i]])
-
-        # print(f"sc_shares: {sc_shares}")
-
-        # 这里测试的就是在得到公共子集之后重构新的 shares 
-        # res = self.poly.interpolate_at(sc_shares, 0)
-        # print(f"{self.my_id} res: {res}")
-
-        
-        # return (self.mks, res)
-
-    # async def masked_values(): 
-
-    
-    async def rbc_masked_step(self, rbc_masked_input): 
-        # print(f"{self.my_id} run the rbc masked step")
-        # print(f"{self.my_id} rbc_masked_input: {rbc_masked_input}")
-
-        rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
-        
-        async def predicate(serialized_masked_input):
-            return True
-
-
-        async def _setup(j):            
-            # starting RBC
-            rbctag =ADKGMsgType.MASK + str(j) # (M, msg)
-            rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
-
-            rbc_input = None
-            if j == self.my_id: 
-                riv = Bitmap(self.n)
-                riv.set_bit(j)
-                rbc_input = rbc_masked_input
-                # print(f"{self.my_id} rbc_input: {rbc_input}")
-
-            # rbc_outputs[j] = 
-            asyncio.create_task(
-                optqrbc(
-                    rbctag,
-                    self.my_id,
-                    self.n,
-                    self.t,
-                    j,
-                    predicate,
-                    rbc_input,
-                    rbc_outputs[j].put_nowait,
-                    rbcsend,
-                    rbcrecv,
-                )
-            )
-
-        await asyncio.gather(*[_setup(j) for j in range(self.n)])
-
-        # 这里存的是序列化的各方广播的 masked values and commitments
-        self.rbcl_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))    
-
     
     async def run_rand(self, w, rounds):
-        
-        
-        
+
         # 这里 acss_outputs 需要针对每一 round 对应不同的 acss_outputs
         # acss_outputs = []
         acss_outputs = {}
         acss_signal = asyncio.Event()
-        
-
-        
-        
+   
         # 改变一下策略，让每个参与方一次性 acss rounds 个随机数
         self.rand_num = rounds
         values = [self.ZR.rand() for _ in range(rounds)]

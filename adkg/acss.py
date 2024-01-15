@@ -196,17 +196,16 @@ class ACSS:
         c_size = 32
 
         # deserializing commitments
-        com_size = g_size*(self.t+1)*(self.sc)
+        com_size = g_size*(self.t+1)*(self.len_values)
         commits_all = self.sr.deserialize_gs(proposal[0:com_size])
-        commits = [commits_all[i*(self.t+1):(i+1)*(self.t+1)] for i in range(self.sc)]
+        commits = [commits_all[i*(self.t+1):(i+1)*(self.t+1)] for i in range(self.len_values)]
 
         # deserializing ciphertexts
         # IMPORTANT: Here 32 additional bytes are used in the ciphertext for padding
-        ctx_size = c_size*2*self.sc*self.n
-        my_ctx_start = com_size + c_size*2*self.sc*self.my_id
-        my_ctx_end = my_ctx_start + c_size*2*self.sc
+        ctx_size = (c_size*2*self.len_values+c_size)*self.n
+        my_ctx_start = com_size + (c_size*2*self.len_values+c_size)*self.my_id
+        my_ctx_end = my_ctx_start + (c_size*2*self.len_values+c_size)
         ctx_bytes = proposal[my_ctx_start:my_ctx_end]
-        print(f"ctx_bytes: {ctx_bytes}")
 
         # deserializing the ephemeral public key
         ephkey = self.sr.deserialize_g(proposal[com_size+ctx_size:])
@@ -264,6 +263,7 @@ class ACSS:
         return (ctx_bytes, commits, ephkey)
     
     def verify_proposal(self, dealer_id, dispersal_msg, commits, ephkey):
+        # return True
         shared_key = ephkey**self.private_key
 
         try:
@@ -286,6 +286,7 @@ class ACSS:
         return True
 
     def verify_proposal_trans(self, dealer_id, dispersal_msg, commits, ephkey):
+        # return True
         shared_key = ephkey**self.private_key
 
         try:
@@ -296,14 +297,11 @@ class ACSS:
             return False
 
         shares = self.sr.deserialize_fs(sharesb)
-        phis, phis_hat = shares[:self.sc], shares[self.sc:]
+        phis, phis_hat = shares[:self.len_values], shares[self.len_values:]
         # check the feldman commitment of the first secret
         # 这里也是分开进行多项式承诺的检验的，所以 k=0 时候的 feldman 承诺是做什么用的还不清楚，目前看来没有它也可以
-        if not self.poly_commit.verify_eval(commits[0], self.my_id + 1, phis[0], None): 
-            self.acss_status[dealer_id] = False
-            return False
-        for i in range(1, self.sc):
-            if not self.poly_commit.verify_eval(commits[i], self.my_id + 1, phis[i], phis_hat[i-1]): 
+        for i in range(self.len_values):
+            if not self.poly_commit.verify_eval(commits[i], self.my_id + 1, phis[i], phis_hat[i]): 
                 self.acss_status[dealer_id] = False
                 return False
             
@@ -311,18 +309,20 @@ class ACSS:
         # 这里是反序列化的代码 
         g_size = self.sr.g_size
         f_size = self.sr.f_size
-        serialized_masked_values = self.rbc_values[dealer_id][:f_size]
-        serialized_masked_values_hat = self.rbc_values[dealer_id][f_size:2*f_size]
-        serialized_c = self.rbc_values[dealer_id][2*f_size:2*f_size+g_size]
+        serialized_masked_values = self.rbc_values[dealer_id][:f_size*self.len_values]
+        serialized_masked_values_hat = self.rbc_values[dealer_id][f_size*self.len_values:2*f_size*self.len_values]
+        serialized_c = self.rbc_values[dealer_id][2*f_size*self.len_values:(2*f_size+g_size)*self.len_values]
 
-        de_masked_values = self.sr.deserialize_f(serialized_masked_values)
-        de_masked_values_hat = self.sr.deserialize_f(serialized_masked_values_hat)
-        de_c = self.sr.deserialize_g(serialized_c)
+        de_masked_values = self.sr.deserialize_fs(serialized_masked_values)
+        de_masked_values_hat = self.sr.deserialize_fs(serialized_masked_values_hat)
+        de_c = self.sr.deserialize_gs(serialized_c)
 
         # 这里实现的是检测 masked values 是否是正确的，如果是正确的，我们将dealer 提供的 shares 存下来，如果不是则丢弃
-        if self.multiexp([self.g, self.h], [de_masked_values, de_masked_values_hat]) != de_c * commits[1][0]: 
-            self.acss_status[dealer_id] = False
-            return False
+        for i in range(self.len_values): 
+            if self.multiexp([self.g, self.h], [de_masked_values[i], de_masked_values_hat[i]]) != de_c[i] * commits[i][0]: 
+                self.acss_status[dealer_id] = False
+                return False
+        
         
         self.acss_status[dealer_id] = True
         self.data[dealer_id] = [commits, phis, phis_hat, ephkey, shared_key]
@@ -651,28 +651,22 @@ class ACSS:
         while len(values) % (batch_size) != 0:
             values.append(0)
         """
-        # 这里分两种情况，values 是 trans 协议来的或者是 aprep 协议来的
-        if len(values) == 2:
-            trans_values, trans_values_hat = values
+        trans_values, trans_values_hat = values
 
         # 这里 phi 和 phi_hat 都是根据 sc 来的
-        phi = [None]*self.sc
-        phi_hat = [None]*self.sc
-        commitments = [None]*self.sc
+        phi = [None] * len(trans_values)
+        phi_hat = [None] * len(trans_values)
+        commitments = [None] * len(trans_values)
         # BatchPolyCommit
         #   Cs  <- BatchPolyCommit(SP,φ(·,k))
         # TODO: Whether we should keep track of that or not
-        for k in range(self.sc):
-            if k == 0:
-                phi[k] = self.poly.random(self.t, trans_values[k])
-                commitments[k] = self.poly_commit.commit(phi[k], None)
-            else:
-                # TODO(@sourav): Implement FFT here
-                phi[k] = self.poly.random(self.t, trans_values[k])
-                # 后面生成的 rand 是不是都是从这里来的
-                phi_hat[k] = self.poly.random(self.t, trans_values_hat[k])
-                # 这里的 commitments 有两个元素，分别是 g 和 h 
-                commitments[k] = self.poly_commit.commit(phi[k], phi_hat[k])
+        for k in range(len(trans_values)):
+            # TODO(@sourav): Implement FFT here
+            phi[k] = self.poly.random(self.t, trans_values[k])
+            # 后面生成的 rand 是不是都是从这里来的
+            phi_hat[k] = self.poly.random(self.t, trans_values_hat[k])
+            # 这里的 commitments 有两个元素，分别是 g 和 h 
+            commitments[k] = self.poly_commit.commit(phi[k], phi_hat[k])
 
 
         ephemeral_secret_key = self.field.rand()
@@ -680,27 +674,18 @@ class ACSS:
         dispersal_msg_list = bytearray()
         for i in range(n):
             shared_key = self.public_keys[i]**ephemeral_secret_key
-            phis_i = [phi[k](i + 1) for k in range(self.sc)]
-            phis_hat_i = [phi_hat[k](i + 1) for k in range(1, self.sc)]
+            phis_i = [phi[k](i + 1) for k in range(len(trans_values))]
+            phis_hat_i = [phi_hat[k](i + 1) for k in range(len(trans_values))]
             ciphertext = SymmetricCrypto.encrypt(shared_key.__getstate__(), self.sr.serialize_fs(phis_i+ phis_hat_i))
             dispersal_msg_list.extend(ciphertext)
 
-        g_commits = commitments[0]
-        for k in range(1, self.sc):
+        g_commits = []
+        for k in range(len(trans_values)):
             g_commits = g_commits + commitments[k]
         datab = self.sr.serialize_gs(g_commits) # Serializing commitments
-        print(f"dispersal_msg_list: {dispersal_msg_list}")
+        # print(f"dispersal_msg_list: {dispersal_msg_list}")
         datab.extend(dispersal_msg_list)
         datab.extend(self.sr.serialize_g(ephemeral_public_key))
-
-        # print(f"id: {self.my_id} datab: {datab}")
-        # datab.extend(dispersal_msg_list)
-        # print(f"id: {self.my_id} datab2: {datab}")
-        # datab.extend(self.sr.serialize_g(ephemeral_public_key))
-        # print(f"id: {self.my_id} datab3: {datab}")
-        # com_size = self.sr.g_size*(self.t+1)*(self.sc)
-        # ctx_size = self.sr.f_size*2*self.sc*self.n
-        # print(f"datab4: {datab[com_size:com_size+ctx_size]}")
 
         return bytes(datab)
     
@@ -931,12 +916,13 @@ class ACSS:
         self.tagvars[acsstag] = {}
         del self.tagvars[acsstag]
 
-    async def avss_trans(self, avss_id, values=None, dealer_id=None):
+    async def avss_tran(self, avss_id, values=None, dealer_id=None):
         """
         An acss with share recovery
         """
         # If `values` is passed then the node is a 'Sender'
         # `dealer_id` must be equal to `self.my_id`
+        self.len_values = len(values[0])
         if values is not None:
             if dealer_id is None:
                 dealer_id = self.my_id
@@ -957,6 +943,70 @@ class ACSS:
         broadcast_msg = None
         if self.my_id == dealer_id:
             # 这里的做法是把每个节点的份额用那个节点的公钥加密，然后打包在一起，放到 broadcast_msg 这个消息里，通过广播信道广播出去
+            broadcast_msg = self._get_dealer_msg_trans(values, n)
+
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        logger.debug("[%d] Starting reliable broadcast", self.my_id)
+
+        async def predicate(_m):
+            dispersal_msg, commits, ephkey = self.decode_proposal_trans(_m)
+            print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
+            return self.verify_proposal_trans(dealer_id, dispersal_msg, commits, ephkey)
+        
+        output = asyncio.Queue()
+        asyncio.create_task(
+        optqrbc(
+            rbctag,
+            self.my_id,
+            self.n,
+            self.t,
+            dealer_id,
+            predicate,
+            broadcast_msg,
+            output.put_nowait,
+            send,
+            recv,
+        ))
+        rbc_msg = await output.get()
+
+        # avss processing
+        # logger.debug("starting acss")
+        await self._process_avss_msg_trans(avss_id, dealer_id, rbc_msg)
+        
+        for task in self.tagvars[acsstag]['tasks']:
+            task.cancel()
+        self.tagvars[acsstag] = {}
+        del self.tagvars[acsstag]
+    
+    async def avss_trans(self, avss_id, len_values, values=None, dealer_id=None):
+        """
+        An acss with share recovery
+        """
+        # If `values` is passed then the node is a 'Sender'
+        # `dealer_id` must be equal to `self.my_id`
+        # 这里存的是各方广播的 masked values
+        if values is not None:
+            if dealer_id is None:
+                dealer_id = self.my_id
+            assert dealer_id == self.my_id, "Only dealer can share values."
+        # If `values` is not passed then the node is a 'Recipient'
+        # Verify that the `dealer_id` is not the same as `self.my_id`
+        elif dealer_id is not None:
+            assert dealer_id != self.my_id
+        assert type(avss_id) is int
+
+        self.len_values = len_values
+        n = self.n
+        rbctag = f"{dealer_id}-{avss_id}-B-RBC"
+        acsstag = f"{dealer_id}-{avss_id}-B-AVSS"
+
+        self.tagvars[acsstag] = {}
+        self.tagvars[acsstag]['tasks'] = []
+
+        broadcast_msg = None
+        if self.my_id == dealer_id:
+            # 这里的做法是把每个节点的份额用那个节点的公钥加密，然后打包在一起，放到 broadcast_msg 这个消息里，通过广播信道广播出去
+            # broadcast_msg = self._get_dealer_msg_trans(values, n)
             broadcast_msg = self._get_dealer_msg_trans(values, n)
 
         send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
@@ -1025,7 +1075,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal_aprep(_m)
-            # print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
+            print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
             return self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()

@@ -1,4 +1,4 @@
-from adkg.polynomial import polynomials_over
+from adkg.polynomial import polynomials_over, EvalPoint
 from adkg.utils.poly_misc import interpolate_g1_at_x
 from adkg.utils.misc import wrap_send, subscribe_recv
 import asyncio
@@ -15,6 +15,10 @@ from adkg.preprocessing import PreProcessedElements
 
 from adkg.mpc import TaskProgramRunner
 from adkg.utils.serilization import Serial
+from adkg.robust_rec import Robust_Rec
+from adkg.field import GF, GFElement
+from adkg.robust_reconstruction import robust_reconstruct_admpc
+from adkg.elliptic_curve import Subgroup
 
 import logging
 logger = logging.getLogger(__name__)
@@ -27,6 +31,8 @@ class ADKGMsgType:
     PREKEY = "P"
     KEY = "K"
     MASK = "M"
+    GENRAND = "GR"
+    ROBUSTREC = "RR"
     
 class CP:
     def __init__(self, g, h, ZR):
@@ -85,7 +91,7 @@ class PoK:
         return  e, w - e*alpha # return (challenge, response)
     
 class Trans:
-    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices):
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params):
         self.public_keys, self.private_key, self.g, self.h = (public_keys, private_key, g, h)
         self.n, self.t, self.deg, self.my_id = (n, t, deg, my_id)
         self.sc = ceil((deg+1)/(t+1)) + 1
@@ -96,13 +102,17 @@ class Trans:
         self.poly.clear_cache() #FIXME: Not sure why we need this.
         # Create a mechanism to split the `recv` channels based on `tag`
         self.subscribe_recv_task, self.subscribe_recv = subscribe_recv(recv)
-        self.matrix = matrices
 
         # Create a mechanism to split the `send` channels based on `tag`
         def _send(tag):
             return wrap_send(tag, send)
         self.get_send = _send
         self.output_queue = asyncio.Queue()
+
+        rectag = ADKGMsgType.ROBUSTREC
+        recsend, recrecv = self.get_send(rectag), self.subscribe_recv(rectag)
+        curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
+        self.rec = Robust_Rec(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, recsend, recrecv, self.pc, curve_params)
 
 
         self.benchmark_logger = logging.LoggerAdapter(
@@ -134,11 +144,12 @@ class Trans:
                          )
         self.acss_tasks = [None] * self.n
         # 这里的话应该是 n-parallel ACSS，看一下怎么做到的
+        len_values = len(trans_values[0])
         for i in range(self.n):
             if i == self.my_id:
-                self.acss_tasks[i] = asyncio.create_task(self.acss.avss_trans(0, values=trans_values))
+                self.acss_tasks[i] = asyncio.create_task(self.acss.avss_trans(0, len_values, values=trans_values))
             else:
-                self.acss_tasks[i] = asyncio.create_task(self.acss.avss_trans(0, dealer_id=i))
+                self.acss_tasks[i] = asyncio.create_task(self.acss.avss_trans(0, len_values, dealer_id=i))
 
         while True:
             (dealer, _, shares, commitments) = await self.acss.output_queue.get()
@@ -151,7 +162,7 @@ class Trans:
             if len(outputs) == self.n:
                 return    
 
-    async def commonsubset(self, rbc_out, acss_outputs, acss_signal, rbc_signal, rbc_values, coin_keys, aba_in, aba_out):
+    async def commonsubset(self, rbc_out, rbc_signal, rbc_values, coin_keys, aba_in, aba_out):
         assert len(rbc_out) == self.n
         assert len(aba_in) == self.n
         assert len(aba_out) == self.n
@@ -178,15 +189,15 @@ class Trans:
                 aba_in[j](1)
             
             subset = True
-            while True:
-                acss_signal.clear()
-                for k in rbc_values[j]:
-                    if k not in acss_outputs.keys():
-                        subset = False
-                if subset:
-                    coin_keys[j]((acss_outputs, rbc_values[j]))
-                    return
-                await acss_signal.wait()
+            # while True:
+            #     acss_signal.clear()
+            #     for k in rbc_values[j]:
+            #         if k not in acss_outputs.keys():
+            #             subset = False
+            #     if subset:
+            #         coin_keys[j]((acss_outputs, rbc_values[j]))
+            #         return
+            #     await acss_signal.wait()
 
         r_threads = [asyncio.create_task(_recv_rbc(j)) for j in range(self.n)]
 
@@ -221,7 +232,7 @@ class Trans:
                 message = await rbc_outputs[j].get()
                 print(f"rbc_outputs[{j}]: {message}")
     
-    async def agreement(self, key_proposal, acss_outputs, acss_signal):
+    async def agreement(self, key_proposal, de_masked_value, index, acss_outputs, acss_signal):
         aba_inputs = [asyncio.Queue() for _ in range(self.n)]
         aba_outputs = [asyncio.Queue() for _ in range(self.n)]
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
@@ -234,24 +245,23 @@ class Trans:
             for ii in range(self.n):
                 if kp.get_bit(ii):
                     kpl.append(ii)
+            print(f"kpl: {kpl}")
+            print(f"de_masked_value: {de_masked_value}")
             if len(kpl) <= self.t:
                 return False
+            GFEG1 = GF(Subgroup.BLS12_381)
+            point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
+            poly, err = robust_reconstruct_admpc(de_masked_value, kpl, GFEG1, self.t, point, self.t)
+            if len(err) != 0: 
+                return False
         
-            while True:
-                subset = True
-                for kk in kpl:
-                    if kk not in acss_outputs.keys():
-                        subset = False
-                if subset:
-                    acss_signal.clear()    
-                    return True
-                acss_signal.clear()
-                await acss_signal.wait()
+            return True
 
         async def _setup(j):
             
             # starting RBC
-            rbctag =ADKGMsgType.RBC + str(j) # (R, msg)
+            rbctag = str(index) + ADKGMsgType.RBC + str(j) # (R, msg)
+            # rbctag = ADKGMsgType.RBC + str(j)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
             rbc_input = None
@@ -261,8 +271,6 @@ class Trans:
                 for k in key_proposal: 
                     riv.set_bit(k)
                 rbc_input = bytes(riv.array)
-                print(f"riv.array: {riv.array}")
-                print(f"rbc_input: {rbc_input}")
 
             # rbc_outputs[j] = 
             asyncio.create_task(
@@ -280,7 +288,8 @@ class Trans:
                 )
             )
 
-            abatag = ADKGMsgType.ABA + str(j) # (B, msg)
+            abatag = str(index) + ADKGMsgType.ABA + str(j) # (B, msg)
+            # abatag = ADKGMsgType.ABA + str(j)
             # abatag = j # (B, msg)
             abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
 
@@ -311,8 +320,6 @@ class Trans:
         return (
             self.commonsubset(
                 rbc_outputs,
-                acss_outputs,
-                acss_signal,
                 rbc_signal,
                 rbc_values,
                 [_.put_nowait for _ in coin_keys],
@@ -320,15 +327,15 @@ class Trans:
                 [_.get for _ in aba_outputs],
             ),
             self.new_share(
-                acss_outputs,
-                acss_signal,
                 rbc_values,
                 rbc_signal,
+                acss_outputs,
+                acss_signal
             ),
             work_tasks,
         )
 
-    async def new_share(self, acss_outputs, acss_signal, rbc_values, rbc_signal):
+    async def new_share(self, rbc_values, rbc_signal, acss_outputs, acss_signal):
         await rbc_signal.wait()
         rbc_signal.clear()
 
@@ -353,53 +360,31 @@ class Trans:
         # print("acss_outputs[0]['shares']['msg'][idx+1]: ", acss_outputs[0]['shares']['msg'])
 
         # 这几步就是每个节点把 shares 随机数，还有承诺提取到这几个二维列表里
-        secrets = [[self.ZR(0)]*self.n for _ in range(self.sc-1)]
-        randomness = [[self.ZR(0)]*self.n for _ in range(self.sc-1)]
-        commits = [[self.G1.identity()]*self.n for _ in range(self.sc-1)]
-        for idx in range(self.sc-1):
+        secrets = [[self.ZR(0)]*self.n for _ in range(self.len_values)]
+        # randomness = [[self.ZR(0)]*self.n for _ in range(self.len_values)]
+        # commits = [[self.G1.identity()]*self.n for _ in range(self.len_values)]
+        for idx in range(self.len_values):
             for node in range(self.n):
                 if node in self.mks:
                     # 重点！！这里 secrets 存的是 idx+1 ，也就是有 phi_hat 对应的 那个 phi 多项式，而不是 Feldman 承诺的 k=0 那个多项式
-                    secrets[idx][node] = acss_outputs[node]['shares']['msg'][idx+1]
+                    secrets[idx][node] = acss_outputs[node]['shares']['msg'][idx]
                     print(f"secret[{idx}][{node}] = {secrets[idx][node]}")
-                    randomness[idx][node] = acss_outputs[node]['shares']['rand'][idx]
-                    print(f"randomness[{idx}][{node}] = {randomness[idx][node]}")
-                    commits[idx][node] = acss_outputs[node]['commits'][idx+1][0]
-                    print(f"commits[{idx}][{node}] = {commits[idx][node]}")
-        
-    
-        z_shares = [self.ZR(0)]*self.n
-        r_shares = [self.ZR(0)]*self.n
+                    # randomness[idx][node] = acss_outputs[node]['shares']['rand'][idx]
+                    # print(f"randomness[{idx}][{node}] = {randomness[idx][node]}")
+                    # commits[idx][node] = acss_outputs[node]['commits'][idx][0]
+                    # print(f"commits[{idx}][{node}] = {commits[idx][node]}")
 
         sc_shares = []
         for i in self.mks:
             sc_shares.append([i+1, secrets[0][i]])
 
-        print(f"sc_shares: {sc_shares}")
+        print(f"my id: {self.my_id} sc_shares: {sc_shares}")
 
         # 这里测试的就是在得到公共子集之后重构新的 shares 
         res = self.poly.interpolate_at(sc_shares, 0)
-        print(f"{self.my_id} res: {res}")
+        print(f"my id: {self.my_id} res: {res}")
 
-        # 这里测试的是两个 shares 的加法
-        test_add = secrets[0][0] + secrets[0][1]
-        print(f"{self.my_id} test_add: {test_add}")
-
-        # 这里测试的是两个 shares 的乘法
-        # pp = PreProcessedElements()
-        # pp.generate_triples(10, self.n, self.t)
-        # async def _prog(ctx):
-        #     for _ in range(10):
-        #         a_sh, b_sh, ab_sh = ctx.preproc.get_triples(ctx)
-        #         a, b, ab = await a_sh.open(), await b_sh.open(), await ab_sh.open()
-        #         assert a * b == ab
-
-        # program_runner = TaskProgramRunner(self.n, self.t)
-        # program_runner.add(_prog)
-        # await program_runner.join()
-    
-        # return (self.mks, secret, pk)
-        return (self.mks, res)
+        return res
 
     # async def masked_values(): 
 
@@ -410,7 +395,7 @@ class Trans:
 
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
         
-        async def predicate(serialized_masked_input):
+        async def predicate(_m):
             return True
 
 
@@ -421,8 +406,6 @@ class Trans:
 
             rbc_input = None
             if j == self.my_id: 
-                riv = Bitmap(self.n)
-                riv.set_bit(j)
                 rbc_input = rbc_masked_input
                 print(f"{self.my_id} rbc_input: {rbc_input}")
 
@@ -446,70 +429,79 @@ class Trans:
 
         # 这里存的是序列化的各方广播的 masked values and commitments
         self.rbcl_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))    
-
     
-    async def run_trans(self, start_time):
-        logging.info(f"Starting ADKG for node {self.my_id}")
-        acss_outputs = {}
-        acss_signal = asyncio.Event()
+    async def run_trans(self, values, rand_values):
+        self.len_values = len(values)
+        # 这里模拟的是 step 1
+        rand_values_hat = [None] * len(values)
+        values_hat = [None] * len(values)
+        for i in range(len(values)): 
+            values_hat[i] = self.ZR.rand()
+            rand_values_hat[i] = self.ZR.rand()
 
-        acss_start_time = time.time()
-        # values 的个数取决于 sc，sc 是什么目前还没看到，目前 values 设置的数量是 2 个
-        # values =[self.ZR.rand() for _ in range(self.sc)]
-
-        values = [None] * (self.sc)
-        values[0] = self.ZR.rand()
-        values[1] = self.ZR(2*(self.my_id+1)+3)
-
-        # 这里模拟的是 private input 的 phi_hat 就是 values 对应的随机数，我们这里的设置是在调用 acss 之前就生成好这些随机数，然后再传入 acss 中
-        values_hat = [None] * self.sc
-        values_hat[0] = self.ZR.rand()
-        values_hat[1] = self.ZR.rand()
-
-        # 这里模拟的是用来给 private input 设置 masked values 的随机数 alpha 和 alpha_hat
-        alpha = self.ZR(self.my_id+1+7)
-        alpha_hat = self.ZR(3*(self.my_id+1)+5)
-        # print("values: ", values)
-
-        # 这一步是给 private input vlaues[1] 加一个 masked value 
-        masked_values = values[1] + alpha
-        masked_values_hat = values_hat[1] + alpha_hat
-        # c = self.pc.commit_alpha(alpha, alpha_hat)
-        c = self.pc.commit_alpha(alpha, alpha_hat)
-
+        # 这里是协议 step 2 和 3
+        masked_values, masked_values_hat = [None] * len(values), [None] * len(values)
+        c = [None] * len(values)
+        for i in range(len(values)): 
+            masked_values[i] = values[i] + rand_values[i]
+            masked_values_hat[i] = values_hat[i] + rand_values_hat[i]
+            c[i] = self.pc.commit_trans(rand_values[i], rand_values_hat[i])
+        
+        # 这里是协议 step 4
         # 我们需要先执行 rbc ，再在 acss 过程中去验证我们的 masked values 的值是否是正确的，这里我们需要一个 signal 来先让acss 协程等待 rbc 结束
         # rbc_masked_signal = asyncio.Event()
         sr = Serial(self.G1)
-        serialized_masked_values = sr.serialize_f(masked_values)
-        serialized_masked_values_hat = sr.serialize_f(masked_values_hat)
-        serialized_c = sr.serialize_g(c)
+        serialized_masked_values = sr.serialize_fs(masked_values)
+        serialized_masked_values_hat = sr.serialize_fs(masked_values_hat)
+        serialized_c = sr.serialize_gs(c)
         rbc_masked_input = serialized_masked_values + serialized_masked_values_hat + serialized_c
-        await asyncio.create_task(self.rbc_masked_step(rbc_masked_input))        
+        await asyncio.create_task(self.rbc_masked_step(bytes(rbc_masked_input)))
 
+        # 这里是协议 step 5
+        acss_outputs = {}
+        acss_signal = asyncio.Event()
         # 这里 我们把要传入的参数放到一个集合中再传入 acss
         trans_values = (values, values_hat)
-        # 这一步是 acss 的过程
-        self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, trans_values, acss_signal))
+        await self.acss_step(acss_outputs, trans_values, acss_signal)
+        # self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, trans_values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
-        print("acss_outputs: ", acss_outputs)
-        acss_time = time.time() - acss_start_time
-        self.benchmark_logger.info(f"ACSS time: {(acss_time)}")
+        # print("acss_outputs: ", acss_outputs)
         
-        key_proposal = list(acss_outputs.keys())
+        # 这里对应协议的 step 6，这里的 LT 就对应论文中的 LT
+        LT = list(acss_outputs.keys())
+
+        # 这里对应协议的 step 7， GT 对应论文中的 GT
+        # de_masked_values = [[self.ZR(0) for _ in range(len(values))] for _ in range(self.n)]
+        de_masked_values = [[self.ZR(0) for _ in range(self.n)] for _ in range(len(values))]
+        for i in range(len(values)): 
+            for j in range(self.n): 
+                if j in LT: 
+                    de_masked_values[i][j] = int(sr.deserialize_f(self.rbcl_list[j][32*i:32*(i+1)]))
+
+        GFEG1 = GF(Subgroup.BLS12_381)
+        point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
+        poly, err, err_list, GT = [None] * len(values), [None] * len(values), [None] * len(values), [None] * len(values)
+        for i in range(len(values)): 
+            poly[i], err[i] = robust_reconstruct_admpc(de_masked_values[i], LT, GFEG1, self.t, point, self.t)
+            err_list[i] = list(err[i])
+            GT[i] = [j for j in range(self.n) if j not in err_list[i]]
 
 
         # 这一步是 MVBA 的过程
-        create_acs_task = asyncio.create_task(self.agreement(key_proposal, acss_outputs, acss_signal))
+        # 这里是协议的 step 7 和 8
+        # 这里的话我们先只允许一个trans 一个值
+        create_acs_task = asyncio.create_task(self.agreement(GT[0], de_masked_values[0], 0, acss_outputs, acss_signal))
+        # create_acs_task = [None] * len(values)
+        # for i in range(len(values)): 
+        #     create_acs_task[i] = asyncio.create_task(self.agreement(GT[i], de_masked_values[i], i, acss_outputs, acss_signal))
+        
         acs, key_task, work_tasks = await create_acs_task
         await acs
         output = await key_task
-        adkg_time = time.time()-start_time
         await asyncio.gather(*work_tasks)
         # mks, sk, pk = output
-        mks, new_shares = output
+        new_shares = output
         # self.output_queue.put_nowait((values[1], mks, sk, pk))
-        self.output_queue.put_nowait((mks, new_shares))
+        self.output_queue.put_nowait(new_shares)
         
-        self.benchmark_logger.info("ADKG time: %f", adkg_time)
-        logging.info(f"ADKG finished! Node {self.my_id}, time: {adkg_time} (seconds)")
