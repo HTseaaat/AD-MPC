@@ -430,5 +430,6 @@ class Rand:
                 rand_shares = rand_shares + new_shares[i]
 
 
-        self.output_queue.put_nowait(rand_shares)
+        # self.output_queue.put_nowait(rand_shares)
+        return rand_shares
         

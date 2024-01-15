@@ -272,6 +272,9 @@ class Robust_Rec:
     
     async def run_robust_rec(self, rec_id, share):
 
+        print(self.send)
+        print(self.recv)
+
         # self.rec_id = rec_id
         self.global_num += 1
 
@@ -291,12 +294,16 @@ class Robust_Rec:
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
         
         async def predicate(_m):
+            print(f"robust_rec my id {self.my_id}")
             return True
 
         async def _setup(j):            
             # starting RBC
+            # rbctag = ADKGMsgType.ROBUSTREC + str(j)
             rbctag = str(self.global_num) + str(rec_id) + ADKGMsgType.ROBUSTREC + str(j) # (M, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+            print(f"rbcsend: {rbcsend}")
+            print(f"rbcrecv: {rbcrecv}")
 
             rbc_input = None
             if j == self.my_id: 

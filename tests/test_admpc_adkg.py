@@ -24,8 +24,10 @@ import asyncio
 import math
 
 import numpy as np
-from adkg.adkg import ADKG
 from adkg.aprep import APREP
+from adkg.computation import Computation
+from adkg.router import SimpleRouter
+from adkg.admpc import ADMPC
 import time
 
 from adkg.trans import Trans
@@ -36,75 +38,6 @@ config = {
     MixinConstants.MultiplyShareArray: BeaverMultiplyArrays(),
     MixinConstants.MultiplyShare: BeaverMultiply(),
 }
-
-
-@TypeCheck()
-async def beaver_multiply(ctx, x: Share, y: Share):
-    """The hello world of MPC: beaver multiplication
-     - Linear operations on Share objects are easy
-     - Shares of random values are available from preprocessing
-     - Opening a Share returns a GFElementFuture
-    """
-    a, b, ab = ctx.preproc.get_triples(ctx)
-    # X = await x.open()
-    # print("X: ", X)
-    # A = await a.open()
-    # B = await b.open()
-    # C = await ab.open()
-    # print("A: ", A)
-    # print("B: ", B)
-    # mulAB = A * B
-    # print("A*B: ", mulAB)
-    # print("C: ", C)
-    D = await (x - a).open()
-    # print("D: ", D)
-    E = await (y - b).open()
-
-    # D*E is multiplying GFElements
-    # D*b, E*a are multiplying GFElement x Share -> Share
-    # ab is a Share
-    # overall the sum is a Share
-
-    xy = (D * E) + (D * b) + (E * a) + ab
-    return xy
-
-
-async def random_permute_pair(ctx, x, y):
-    """
-    Randomly permute a pair of secret shared values.
-    Input: `x`, `y` are `Share` objects
-    Output: A pair of `Share` objects `(o1,o2)`, which are fresh
-       shares that take on the value `(x,y)` or `(y,x)` with equal
-       probability
-    Preprocessing:
-    - One random bit
-    - One beaver multiplication
-    """
-    b = ctx.preproc.get_bit(ctx)
-    # just a local scalar multiplication
-    one_or_minus_one = ctx.field(2) * b - ctx.field(1)
-    m = one_or_minus_one * (x - y)
-    o1 = (x + y + m) * (1 / ctx.field(2))
-    o2 = (x + y - m) * (1 / ctx.field(2))
-    return (o1, o2)
-
-
-# Working with arrays
-def dot_product(ctx, x_shares, y_shares):
-    """Although the above example of Beaver multiplication is perfectly valid,
-    you can also just use the `*` operator of the Share object, which does
-    the same thing.
-
-    This is also an example of dataflow programming. The return value of this
-    operation is a `ShareFuture`, which defines addition and multiplication
-    operations as well (like in Viff). As a result, all of these multiplications
-    can take place in parallel.
-    """
-    res = ctx.ShareFuture()
-    res.set_result(ctx.Share(0))
-    for x, y in zip(x_shares, y_shares):
-        res += x * y
-    return res
 
 
 def get_avss_params(n, t):
@@ -120,71 +53,64 @@ async def gather_outputs(acss_list):
         *[acss.output_queue.get() for acss in acss_list if acss is not None]
     )
 
-def gen_vector(t, deg, n, ZR):
-    coeff_1 = np.array([[ZR(i+1)**j for j in range(t+1)] for i in range(n)])
-    coeff_2 = np.array([[ZR(i+1)**j for j in range(t+1, deg+1)] for i in range(n)])
-    hm_1 = np.array([[ZR(i+1)**j for j in range(n)] for i in range(t+1)])
-    hm_2 = np.array([[ZR(i+1)**j for j in range(n)] for i in range(deg-t)])
-    rm_1 = np.matmul(coeff_1, hm_1)
-    rm_2 = np.matmul(coeff_2, hm_2)
+def gen_vector(t, n, ZR):
+    # 这里的 coeff 是系数，重点！！也就是论文的逻辑是各方 acss 得到的随机数先跟 Vandermonde Matrix 相乘，再根据不同参与方添加不同的系数 x
+    # 但这里的逻辑是 先提前生成好系数矩阵，再拿系数矩阵与 Vandermonde Matrix 相乘，最后再去乘以 随机数矩阵，得到的输出自然就包含不同参与方的不同系数
+    # coeff_1 = np.array([[ZR(i+1)**j for j in range(t+1)] for i in range(n)])
+    # print(f"coeff_1: {coeff_1}")
+    # coeff_2 = np.array([[ZR(i+1)**j for j in range(t+1, deg+1)] for i in range(n)])
+    # 这里 hm 是 Vandermonde Matrix 
+    # hm_1 = np.array([[ZR(i+1)**j for j in range(n)] for i in range(t+1)])
+    # hm_2 = np.array([[ZR(i+1)**j for j in range(n)] for i in range(deg-t)])
+    # print(f"hm_1: {hm_1}")
+    # rm_1 = np.matmul(coeff_1, hm_1)
+    # rm_2 = np.matmul(coeff_2, hm_2)
+    # print(f"rm_1: {rm_1}")
+    # print(f"rm_1.tolist(): {rm_1.tolist()}")
 
-    return (rm_1.tolist(), rm_2.tolist())
+    vm = np.array([[ZR(i+1)**j for j in range(n)] for i in range(n-t)])
+    # print(f"vm: {vm}")
+    print(f"vm.tolist(): {vm.tolist()}")
 
-# 这里是 acss 的测试代码
-async def prog(ctx):
-    print(f"my id: {ctx.myid} ctx.N: {ctx.N}")
-    t = ctx.t
-    deg = t
-    n = ctx.N
-    sc = math.ceil(deg/t) + 1
-    myid = ctx.myid
-
-    g, h, public_keys, private_key = ctx.g, ctx.h, ctx.public_keys, ctx.private_key
-    pc = PolyCommitHybrid(g, h, ZR, multiexp)
-
-    mat1, mat2 = gen_vector(t, deg, n, ZR)
-
-
-    
-    dkg_tasks = ctx.avss_tasks
-    dkg_list = ctx.acss_list
-
-    start_time = time.time()
-    curve_params = (ZR, G1, multiexp, dotprod)
-
-    aprep = APREP(public_keys, private_key, g, h, n, t, deg, myid, ctx.send, ctx.recv, pc, curve_params)
-    aprep_lists = [None] * n
-    aprep_lists[myid] = aprep
-    aprep_tasks = [None] * n
-    aprep_tasks[myid] = asyncio.create_task(aprep.run_aprep(start_time))
-
-    
-    # print(f"myid: {ctx.myid} ctx.send: {ctx.send}")
-    # print(f"myid: {ctx.myid} ctx.recv: {ctx.recv}")
-    # 这里异步延迟的设置可能还没有考虑
-    dkg = Trans(public_keys, private_key, g, h, n, t, deg, myid, ctx.send, ctx.recv, pc, curve_params, (mat1, mat2))
-    dkg_list[myid] = dkg
-    dkg_tasks[myid] = asyncio.create_task(dkg.run_trans(start_time))
-    
-
-    # outputs = await gather_outputs(acss_list)
-    # print(f"outputs: {outputs}")
-    # shares = [output[2][0] for output in outputs]
-
+    return (vm.tolist())
 
 async def tutorial_1():
     # Create a test network of 4 nodes (no sockets, just asyncio tasks)
     n, t = 4, 1
-    pp = FakePreProcessedElements()
-    pp.generate_zeros(100, n, t)
-    pp.generate_triples(100, n, t)
-    pp.generate_bits(100, n, t)
-    program_runner = TaskProgramRunner(n, t, config)
-    program_runner.add(prog)
-    # program_runner.join 这个函数设计的有问题，注释掉里面的代码程序部分函数不调用了，可能会影响到 aprep 协议的输出
-    results = await program_runner.join()
-    print(f"results: {results}")
-    return results
+
+    g, h, pks, sks = get_avss_params(n, t)
+    router = SimpleRouter(n)
+    pc = PolyCommitHybrid(g, h, ZR, multiexp)
+    deg = t
+    mat = gen_vector(t, n, ZR)
+
+    admpc_tasks = [None] * n # async task for adkg
+    admpc_list = [None] * n #
+
+    start_time = time.time()
+    curve_params = (ZR, G1, multiexp, dotprod)
+
+    for i in range(n):
+        admpc = ADMPC(pks, sks[i], g, h, n, t, deg, i, router.sends[i], router.recvs[i], pc, curve_params, mat)
+        admpc_list[i] = admpc
+        admpc_tasks[i] = asyncio.create_task(admpc.run_admpc(start_time))
+    await asyncio.gather(*admpc_tasks)
+
+    # n, t = 4, 1
+
+    # program_lists = [None] * n
+    # program_tasks = [None] * n
+
+    # for i in range(n): 
+    #     program_tasks[i] = asyncio.create_task(program(i, n, t))
+
+    
+    # program_runner = TaskProgramRunner(n, t, config)
+    # program_runner.add(prog)
+    # # program_runner.join 这个函数设计的有问题，注释掉里面的代码程序部分函数不调用了，可能会影响到 aprep 协议的输出
+    # results = await program_runner.join()
+    # print(f"results: {results}")
+    # return results
 
 
 def main():

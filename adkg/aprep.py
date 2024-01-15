@@ -23,15 +23,16 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.NOTSET)
 
-class ADKGMsgType:
-    ACSS = "A"
-    RBC = "R"
-    ABA = "B"
-    PREKEY = "P"
-    KEY = "K"
-    MASK = "M"
-    GENRAND = "GR"
-    ROBUSTREC = "RR"
+class APREPMsgType:
+    ACSS = "AP.A"
+    RBC = "AP.R"
+    ABA = "AP.B"
+    PREKEY = "AP.P"
+    KEY = "AP.K"
+    MASK = "AP.M"
+    GENRAND = "AP.GR"
+    ROBUSTREC = "AP.RR"
+    APREP = "AP.AP"
     
 class APREP:
     def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrix):
@@ -53,7 +54,7 @@ class APREP:
         self.get_send = _send
         self.output_queue = asyncio.Queue()
 
-        rectag = ADKGMsgType.ROBUSTREC
+        rectag = APREPMsgType.ROBUSTREC
         recsend, recrecv = self.get_send(rectag), self.subscribe_recv(rectag)
         curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
         self.rec = Robust_Rec(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, recsend, recrecv, self.pc, curve_params)
@@ -81,8 +82,8 @@ class APREP:
         return self
 
     async def acss_step(self, outputs, aprep_values, acss_signal):
-        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
-        acsstag = ADKGMsgType.ACSS
+        # 这里 APREPMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+        acsstag = APREPMsgType.ACSS
         acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
         self.acss = ACSS(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, acsssend, acssrecv, self.pc, self.ZR, self.G1
                          )
@@ -192,7 +193,7 @@ class APREP:
         async def _setup(j):
             
             # starting RBC
-            rbctag =ADKGMsgType.RBC + str(j) # (R, msg)
+            rbctag =APREPMsgType.RBC + str(j) # (R, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
             rbc_input = None
@@ -221,7 +222,7 @@ class APREP:
                 )
             )
 
-            abatag = ADKGMsgType.ABA + str(j) # (B, msg)
+            abatag = APREPMsgType.ABA + str(j) # (B, msg)
             # abatag = j # (B, msg)
             abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
 
@@ -397,19 +398,20 @@ class APREP:
     
     
     async def gen_rand_step(self, rand_num, rand_outputs, rand_signal):
-        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+        # 这里 APREPMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
         if rand_num > self.n - self.t: 
             rounds = math.ceil(rand_num / (self. n - self.t))
         else: 
             rounds = 1
-        randtag = ADKGMsgType.GENRAND
+        randtag = APREPMsgType.GENRAND
         randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
         curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
         self.rand = Rand(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, randsend, randrecv, self.pc, curve_params, self.matrix)
         self.rand_task = asyncio.create_task(self.rand.run_rand(rand_num, rounds))
 
         while True: 
-            rand_outputs = await self.rand.output_queue.get()
+            # rand_outputs = await self.rand.output_queue.get()
+            rand_outputs = await self.rand_task
 
             if len(rand_outputs) == rand_num: 
                 print(f"my id: {self.my_id} rand_outputs: {rand_outputs}")
@@ -429,8 +431,6 @@ class APREP:
         
     
     async def run_aprep(self, cm):
-        logging.info(f"Starting ADKG for node {self.my_id}")
-        
         gen_rand_outputs = []
         gen_rand_signal = asyncio.Event()
 
@@ -562,8 +562,8 @@ class APREP:
         output = await key_task
         await asyncio.gather(*work_tasks)
         # mks, sk, pk = output
-        mks, new_shares = output
+        mks, new_mult_triples = output
         # self.output_queue.put_nowait((values[1], mks, sk, pk))
-        self.output_queue.put_nowait((mks, new_shares))
+        # self.output_queue.put_nowait(new_mult_triples)
+        return new_mult_triples
         
-        logging.info(f"ADKG finished! Node {self.my_id}")

@@ -1,4 +1,4 @@
-from adkg.polynomial import polynomials_over
+from adkg.polynomial import polynomials_over, EvalPoint
 from adkg.utils.poly_misc import interpolate_g1_at_x
 from adkg.utils.misc import wrap_send, subscribe_recv
 import asyncio
@@ -14,12 +14,11 @@ from adkg.broadcast.optqrbc import optqrbc
 from adkg.preprocessing import PreProcessedElements
 
 from adkg.mpc import TaskProgramRunner
-from adkg.computation import Computation
-from adkg.robust_rec import robust_reconstruct_admpc, Robust_Rec
-from adkg.trans import Trans
-from adkg.rand import Rand
-from adkg.aprep import APREP
-import math
+from adkg.utils.serilization import Serial
+from adkg.robust_rec import Robust_Rec
+from adkg.field import GF, GFElement
+from adkg.robust_reconstruction import robust_reconstruct_admpc
+from adkg.elliptic_curve import Subgroup
 
 import logging
 logger = logging.getLogger(__name__)
@@ -31,25 +30,21 @@ class ADKGMsgType:
     ABA = "B"
     PREKEY = "P"
     KEY = "K"
+    MASK = "M"
     GENRAND = "GR"
     ROBUSTREC = "RR"
-    TRANS = "TR"
-    APREP = "AP"
     
 
-class ADMPC:
-    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices):
+class Computation:
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params):
         self.public_keys, self.private_key, self.g, self.h = (public_keys, private_key, g, h)
         self.n, self.t, self.deg, self.my_id = (n, t, deg, my_id)
         self.send, self.recv, self.pc = (send, recv, pc)
         self.ZR, self.G1, self.multiexp, self.dotprod = curve_params
-        self.curve_params = curve_params
-        print(f"type(self.ZR): {type(self.ZR)}")
         self.poly = polynomials_over(self.ZR)
         self.poly.clear_cache() #FIXME: Not sure why we need this.
         # Create a mechanism to split the `recv` channels based on `tag`
         self.subscribe_recv_task, self.subscribe_recv = subscribe_recv(recv)
-        self.matrix = matrices
 
         # Create a mechanism to split the `send` channels based on `tag`
         def _send(tag):
@@ -61,8 +56,6 @@ class ADMPC:
         recsend, recrecv = self.get_send(rectag), self.subscribe_recv(rectag)
         curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
         self.rec = Robust_Rec(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, recsend, recrecv, self.pc, curve_params)
-
-
 
 
         self.benchmark_logger = logging.LoggerAdapter(
@@ -85,7 +78,7 @@ class ADMPC:
 
     def __exit__(self, type, value, traceback):
         return self
-
+    
     async def robust_rec_step(self, rec_shares, rec_signal):                
         
         
@@ -132,58 +125,6 @@ class ADMPC:
 
         # self.output_queue.put_nowait(gate_output_values)
         return gate_output_values
-    
-    async def run_admpc(self, start_time):
 
-
-        acss_start_time = time.time()
-
-        # 首先缺失了由上一层接收到的 shares
-        # 这里先假设收到的输入存在 inputs 列表中
-        inputs = [self.ZR(2*(self.my_id+1)+3), self.ZR(3*(self.my_id+1)+2)]
-        # gate_tape 表示当前层的电路门的 tape，0 代表加法，1 代表乘法
-        gate_tape = [1]
-        # 这里缺失了由上一层提供的随机数，乘法三元组，以及上一层计算的输出
-        # 先假设大家接收到的乘法三元组是 a() = x+5 b()=3x+2 c()=2x+10
-        mult_triples = [[self.ZR((self.my_id+1)+5), self.ZR(3*(self.my_id+1)+2), self.ZR(2*(self.my_id+1)+10)]]
-        # 先假设生成的随机数 alpha()=2x+5
-        rand_values = [self.ZR(2*(self.my_id+1)+5)]
-
-
-        # 这里是 execution stage 的 step 1，执行当前层的计算
-
-        gate_outputs = await self.run_computation(inputs, gate_tape, mult_triples)
-        print(f"my id: {self.my_id} outputs: {gate_outputs}")
-
-
-        # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
-        # w 是需要生成的随机数的数量
-        w = 3
-
-        if w > self.n - self.t: 
-            rounds = math.ceil(w / (self.n - self.t))
-        else: 
-            rounds = 1
-
-        randtag = ADKGMsgType.GENRAND
-        randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
-        rand = Rand(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, randsend, randrecv, self.pc, self.curve_params, self.matrix)
-        rand_shares = await rand.run_rand(w, rounds)
-        print(f"rand_shares: {rand_shares}")
-
-        # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组
-        cm = 2
-
-        apreptag = ADKGMsgType.APREP
-        aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
-        aprep = APREP(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, aprepsend, apreprecv, self.pc, self.curve_params, self.matrix)
-        new_mult_triples = await aprep.run_aprep(cm)
-        print(f"new_mult_triples: {new_mult_triples}")
-
-
-        # 这里是 execution stage 的 step 4，调用 Trans 协议将当前层的电路输出传输到下一层
-        transtag = ADKGMsgType.TRANS
-        transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
-        trans = Trans(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, transsend, transrecv, self.pc, self.curve_params)
-        new_shares = await trans.run_trans(gate_outputs, rand_values)
-        print(new_shares)
+        # self.output_queue.put_nowait(gate_output_values)
+        

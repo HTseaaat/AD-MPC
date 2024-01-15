@@ -225,12 +225,6 @@ class Trans:
                 rbc_values[j] = None
 
         rbc_signal.set()
-
-    async def print_rbc_outputs(self, rbc_outputs): 
-        for j in range(len(rbc_outputs)): 
-            while not rbc_outputs[j].empty(): 
-                message = await rbc_outputs[j].get()
-                print(f"rbc_outputs[{j}]: {message}")
     
     async def agreement(self, key_proposal, de_masked_value, index, acss_outputs, acss_signal):
         aba_inputs = [asyncio.Queue() for _ in range(self.n)]
@@ -253,7 +247,7 @@ class Trans:
             point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
             poly, err = robust_reconstruct_admpc(de_masked_value, kpl, GFEG1, self.t, point, self.t)
             if len(err) != 0: 
-                return False
+                return False          
         
             return True
 
@@ -330,12 +324,13 @@ class Trans:
                 rbc_values,
                 rbc_signal,
                 acss_outputs,
-                acss_signal
+                acss_signal, 
+                index
             ),
             work_tasks,
         )
 
-    async def new_share(self, rbc_values, rbc_signal, acss_outputs, acss_signal):
+    async def new_share(self, rbc_values, rbc_signal, acss_outputs, acss_signal, index):
         await rbc_signal.wait()
         rbc_signal.clear()
 
@@ -360,23 +355,17 @@ class Trans:
         # print("acss_outputs[0]['shares']['msg'][idx+1]: ", acss_outputs[0]['shares']['msg'])
 
         # 这几步就是每个节点把 shares 随机数，还有承诺提取到这几个二维列表里
-        secrets = [[self.ZR(0)]*self.n for _ in range(self.len_values)]
-        # randomness = [[self.ZR(0)]*self.n for _ in range(self.len_values)]
-        # commits = [[self.G1.identity()]*self.n for _ in range(self.len_values)]
-        for idx in range(self.len_values):
-            for node in range(self.n):
-                if node in self.mks:
-                    # 重点！！这里 secrets 存的是 idx+1 ，也就是有 phi_hat 对应的 那个 phi 多项式，而不是 Feldman 承诺的 k=0 那个多项式
-                    secrets[idx][node] = acss_outputs[node]['shares']['msg'][idx]
-                    print(f"secret[{idx}][{node}] = {secrets[idx][node]}")
-                    # randomness[idx][node] = acss_outputs[node]['shares']['rand'][idx]
-                    # print(f"randomness[{idx}][{node}] = {randomness[idx][node]}")
-                    # commits[idx][node] = acss_outputs[node]['commits'][idx][0]
-                    # print(f"commits[{idx}][{node}] = {commits[idx][node]}")
+        secrets = [self.ZR(0)] * self.n 
+        
+        for node in range(self.n):
+            if node in self.mks:
+                secrets[node] = acss_outputs[node]['shares']['msg'][index]
+                print(f"secret[{node}] = {secrets[node]}")
+                    
 
         sc_shares = []
         for i in self.mks:
-            sc_shares.append([i+1, secrets[0][i]])
+            sc_shares.append([i+1, secrets[i]])
 
         print(f"my id: {self.my_id} sc_shares: {sc_shares}")
 
@@ -491,17 +480,30 @@ class Trans:
         # 这一步是 MVBA 的过程
         # 这里是协议的 step 7 和 8
         # 这里的话我们先只允许一个trans 一个值
-        create_acs_task = asyncio.create_task(self.agreement(GT[0], de_masked_values[0], 0, acss_outputs, acss_signal))
-        # create_acs_task = [None] * len(values)
-        # for i in range(len(values)): 
-        #     create_acs_task[i] = asyncio.create_task(self.agreement(GT[i], de_masked_values[i], i, acss_outputs, acss_signal))
+        # create_acs_task = asyncio.create_task(self.agreement(GT[0], de_masked_values[0], 0, acss_outputs, acss_signal))
+        # create_acs_task = asyncio.create_task(self.agreement(GT[0], de_masked_values, i, acss_outputs, acss_signal))
+        create_acs_tasks = [None] * len(values)
+        for i in range(len(values)): 
+            create_acs_tasks[i] = asyncio.create_task(self.agreement(GT[i], de_masked_values[i], i, acss_outputs, acss_signal))
         
-        acs, key_task, work_tasks = await create_acs_task
-        await acs
-        output = await key_task
-        await asyncio.gather(*work_tasks)
-        # mks, sk, pk = output
+        
+        agreement_results = await asyncio.gather(*create_acs_tasks)
+        acs = [result[0] for result in agreement_results]
+        key_task = [result[1] for result in agreement_results]
+        work_tasks = [result[2] for result in agreement_results]
+        
+        # acs, key_task, work_tasks = await asyncio.gather(*create_acs_tasks)
+        await asyncio.gather(*acs)
+        output = await asyncio.gather(*key_task)
+        # await asyncio.gather(*work_tasks)
         new_shares = output
-        # self.output_queue.put_nowait((values[1], mks, sk, pk))
-        self.output_queue.put_nowait(new_shares)
+        
+        # acs, key_task, work_tasks = await create_acs_task
+        # await acs[0]
+        # output = await key_task[0]
+        # await asyncio.gather(*work_tasks[0])
+        # new_shares = output
+
+        # self.output_queue.put_nowait(new_shares)
+        return new_shares
         
