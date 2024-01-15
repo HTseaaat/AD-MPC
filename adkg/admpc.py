@@ -14,7 +14,6 @@ from adkg.broadcast.optqrbc import optqrbc
 from adkg.preprocessing import PreProcessedElements
 
 from adkg.mpc import TaskProgramRunner
-from adkg.computation import Computation
 from adkg.robust_rec import robust_reconstruct_admpc, Robust_Rec
 from adkg.trans import Trans
 from adkg.rand import Rand

@@ -25,7 +25,6 @@ import math
 
 import numpy as np
 from adkg.aprep import APREP
-from adkg.computation import Computation
 from adkg.router import SimpleRouter
 from adkg.admpc import ADMPC
 import time
