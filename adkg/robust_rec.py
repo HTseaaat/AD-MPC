@@ -28,15 +28,16 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.NOTSET)
 
-class ADKGMsgType:
-    ACSS = "A"
-    RBC = "R"
-    ABA = "B"
-    PREKEY = "P"
-    KEY = "K"
-    MASK = "M"
-    GENRAND = "GR"
-    ROBUSTREC = "RR"
+class ROBUSTRECMsgType:
+    ACSS = "RR.A"
+    RBC = "RR.R"
+    ABA = "RR.B"
+    PREKEY = "RR.P"
+    KEY = "RR.K"
+    MASK = "RR.M"
+    GENRAND = "RR.GR"
+    ROBUSTREC = "RR.RR"
+    APREP = "RR.AP"
     
 
 class Robust_Rec:
@@ -104,14 +105,14 @@ class Robust_Rec:
                 aba_in[j](1)
             
             subset = True
-            # while True:
-            #     acss_signal.clear()
-            #     for k in rbc_values[j]:
-            #         if k not in acss_outputs.keys():
-            #             subset = False
-            #     if subset:
-            #         coin_keys[j]((acss_outputs, rbc_values[j]))
-            #         return
+            while True:
+                # acss_signal.clear()
+                # for k in rbc_values[j]:
+                #     if k not in acss_outputs.keys():
+                #         subset = False
+                if subset:
+                    coin_keys[j]((rbc_values[j]))
+                    return
             #     await acss_signal.wait()
 
         r_threads = [asyncio.create_task(_recv_rbc(j)) for j in range(self.n)]
@@ -148,6 +149,8 @@ class Robust_Rec:
         
         coin_keys = [asyncio.Queue() for _ in range(self.n)]
 
+        print(f"my id: {self.my_id} rec_id: {rec_id}")
+
         # 这里 robust-rec 的谓词应该还需要用鲁棒性插值进行检验
         async def predicate(_key_proposal):
             kp = Bitmap(self.n, _key_proposal)
@@ -161,9 +164,13 @@ class Robust_Rec:
                 return False
             GFEG1 = GF(Subgroup.BLS12_381)
             point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
-            poly, err = robust_reconstruct_admpc(rbc_shares, kpl, GFEG1, self.t, point, self.t)
-            if len(err) != 0: 
-                return False
+            poly, err = [None] * len(rbc_shares), [None] * len(rbc_shares)
+            for i in range(len(rbc_shares)): 
+                poly[i], err[i] = await robust_reconstruct_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
+            err_list = [list(err[i]) for i in range(len(err))]
+            for i in range(len(err_list)): 
+                if len(err_list[i]) != 0: 
+                    return False
         
             return True
             
@@ -171,7 +178,7 @@ class Robust_Rec:
         async def _setup(j):
             
             # starting RBC
-            rbctag = str(self.global_num) + str(rec_id) + ADKGMsgType.RBC + str(j) # (R, msg)
+            rbctag = str(self.global_num) + str(rec_id) + ROBUSTRECMsgType.RBC + str(j) # (R, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
             rbc_input = None
@@ -200,7 +207,7 @@ class Robust_Rec:
                 )
             )
 
-            abatag = str(self.global_num) + str(rec_id) + ADKGMsgType.ABA + str(j) # (B, msg)
+            abatag = str(self.global_num) + str(rec_id) + ROBUSTRECMsgType.ABA + str(j) # (B, msg)
             # abatag = j # (B, msg)
             abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
 
@@ -260,20 +267,128 @@ class Robust_Rec:
         
         
         print("mks: ", self.mks)
-        print(f"type rbc_shares: {type(rbc_shares[0])}")
-        sc_shares = []
-        for i in self.mks:
-            sc_shares.append([i+1, rbc_shares[i]])
-        res = self.poly.interpolate_at(sc_shares, 0)
+        sc_shares = [] 
+        for i in range(len(rbc_shares)): 
+            sc_shares.append([])
+            for j in self.mks: 
+                sc_shares[i].append([j+1, rbc_shares[i][j]])
+        # for i in self.mks:
+        #     sc_shares.append([i+1, rbc_shares[i]])
+        res = [None] * len(rbc_shares)
+        for i in range(len(rbc_shares)): 
+            res[i] = self.poly.interpolate_at(sc_shares[i], 0)
+        # res = self.poly.interpolate_at(sc_shares, 0)
         print(f"{self.my_id} res: {res}")
 
         return (self.mks, res)
         
     
-    async def run_robust_rec(self, rec_id, share):
+    async def batch_run_robust_rec(self, rec_id, shares):
 
-        print(self.send)
-        print(self.recv)
+        # self.rec_id = rec_id
+        self.global_num += 1
+
+        sr = Serial(self.G1)
+        serialized_shares = bytes(sr.serialize_fs(shares))
+        # print(f"serialized_share: {serialized_share}")
+
+        # 这里测试一下，鲁棒性插值是否真的可以发现错误的 share
+        # if self.my_id != 0: 
+        #     serialized_share = sr.serialize_f(share)
+        #     print(f"serialized_share: {serialized_share}")
+        # else: 
+        #     serialized_share = sr.serialize_f(self.ZR(1))
+        
+        print(f"my id: {self.my_id} rec_id: {rec_id}")
+
+        rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
+        
+        async def predicate(_m):
+            print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
+            return True
+
+        async def _setup(j):            
+            # starting RBC
+            # rbctag = ROBUSTRECMsgType.ROBUSTREC + str(j)
+            rbctag = str(self.global_num) + str(rec_id) + ROBUSTRECMsgType.ROBUSTREC + str(j) # (M, msg)
+            rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+
+            rbc_input = None
+            if j == self.my_id: 
+                rbc_input = serialized_shares
+                print(f"my id: {self.my_id} rec_id: {rec_id} rbc_input: {rbc_input}")                                  
+
+            # rbc_outputs[j] = 
+            
+            rbc_task = asyncio.create_task(
+                optqrbc(
+                    rbctag,
+                    self.my_id,
+                    self.n,
+                    self.t,
+                    j,
+                    predicate,
+                    rbc_input,
+                    rbc_outputs[j].put_nowait,
+                    rbcsend,
+                    rbcrecv,
+                )
+            )
+
+            # await rbc_task
+
+        await asyncio.gather(*[_setup(j) for j in range(self.n)])
+
+        rbc_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))  
+
+        # print(f"rbcl_list: {rbc_list}")
+        rbc_shares = [[None for _ in range(len(rbc_list))] for _ in range(len(sr.deserialize_fs(rbc_list[0])))]
+        for i in range(len(sr.deserialize_fs(rbc_list[0]))): 
+            for node in range(len(rbc_list)): 
+                de_rbc_list = sr.deserialize_fs(rbc_list[node])
+                rbc_shares[i][node] = int(de_rbc_list[i])
+        
+
+        # 这里看一下能否把定义在 ZR 和 G1 上的元素转化到 hoheybadgerMPC 定义的 GFE 类上，再执行 鲁棒性插值的工作
+        GFEG1 = GF(Subgroup.BLS12_381)
+        # gfe_rbc_msg = [GFEG1(int(rbc_shares[i])) for i in range(len(rbc_shares))] 
+        # share = Share(gfe_rbc_msg[self.my_id], self.t)
+        # x = await share.open()
+        point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
+        key_proposal = [i for i in range(self.n)]
+        poly, err = [None] * len(rbc_shares), [None] * len(rbc_shares)
+        for i in range(len(rbc_shares)): 
+            poly[i], err[i] = await robust_reconstruct_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
+        
+        te = int(poly[0].coeffs[0])
+        tes = self.ZR(te)
+        err_list = [list(err[i]) for i in range(len(err))]
+
+        # 这个就是通过鲁棒性插值找到的 2t+1 的集合
+        for i in range(len(err_list)): 
+            if len(err_list[i]) == 0: 
+                continue
+            else: 
+                for j in range(len(err_list[i])): 
+                    key_proposal.pop(err_list[i][j])
+        
+
+        # 这一步是 MVBA 的过程
+        create_acs_task = asyncio.create_task(self.agreement(key_proposal, rbc_shares, rec_id))
+        acs, key_task, work_tasks = await create_acs_task
+        await acs
+        output = await key_task
+        await asyncio.gather(*work_tasks)
+        
+        mks, rec_values = output
+        print(f"my id: {self.my_id} rec_value: {rec_values}")
+
+
+        # self.output_queue.put_nowait(rec_value)
+        return rec_values
+    
+    
+    async def run_robust_rec(self, rec_id, share):
 
         # self.rec_id = rec_id
         self.global_num += 1
@@ -294,21 +409,19 @@ class Robust_Rec:
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
         
         async def predicate(_m):
-            print(f"robust_rec my id {self.my_id}")
+            print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
             return True
 
         async def _setup(j):            
             # starting RBC
-            # rbctag = ADKGMsgType.ROBUSTREC + str(j)
-            rbctag = str(self.global_num) + str(rec_id) + ADKGMsgType.ROBUSTREC + str(j) # (M, msg)
+            # rbctag = ROBUSTRECMsgType.ROBUSTREC + str(j)
+            rbctag = str(self.global_num) + str(rec_id) + ROBUSTRECMsgType.ROBUSTREC + str(j) # (M, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
-            print(f"rbcsend: {rbcsend}")
-            print(f"rbcrecv: {rbcrecv}")
 
             rbc_input = None
             if j == self.my_id: 
                 rbc_input = serialized_share
-                print(f"{self.my_id} rbc_input: {rbc_input}")                                  
+                print(f"my id: {self.my_id} rec_id: {rec_id} rbc_input: {rbc_input}")                                  
 
             # rbc_outputs[j] = 
             
@@ -344,8 +457,7 @@ class Robust_Rec:
         # x = await share.open()
         point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
         key_proposal = [i for i in range(self.n)]
-        poly, err = robust_reconstruct_admpc(rbc_shares, key_proposal, GFEG1, self.t, point, self.t)
-        # print(f"poly: {type(poly.coeffs[0])}")
+        poly, err = await robust_reconstruct_admpc(rbc_shares, key_proposal, GFEG1, self.t, point, self.t)
         te = int(poly.coeffs[0])
         tes = self.ZR(te)
         err_list = list(err)

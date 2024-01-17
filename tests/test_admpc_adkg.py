@@ -47,10 +47,6 @@ def get_avss_params(n, t):
         public_keys[i] = pow(g, private_keys[i])
     return g, h, public_keys, private_keys
 
-async def gather_outputs(acss_list):
-    return await asyncio.gather(
-        *[acss.output_queue.get() for acss in acss_list if acss is not None]
-    )
 
 def gen_vector(t, n, ZR):
     # 这里的 coeff 是系数，重点！！也就是论文的逻辑是各方 acss 得到的随机数先跟 Vandermonde Matrix 相乘，再根据不同参与方添加不同的系数 x
@@ -69,13 +65,12 @@ def gen_vector(t, n, ZR):
 
     vm = np.array([[ZR(i+1)**j for j in range(n)] for i in range(n-t)])
     # print(f"vm: {vm}")
-    print(f"vm.tolist(): {vm.tolist()}")
 
     return (vm.tolist())
 
 async def tutorial_1():
     # Create a test network of 4 nodes (no sockets, just asyncio tasks)
-    n, t = 4, 1
+    n, t = 16, 5
 
     g, h, pks, sks = get_avss_params(n, t)
     router = SimpleRouter(n)

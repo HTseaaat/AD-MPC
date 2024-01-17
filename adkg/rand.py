@@ -22,13 +22,17 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.NOTSET)
 
-class ADKGMsgType:
-    ACSS = "A"
-    RBC = "R"
-    ABA = "B"
-    PREKEY = "P"
-    KEY = "K"
-    MASK = "M"
+class RANDMsgType:
+    ACSS = "GR.A"
+    RBC = "GR.R"
+    ABA = "GR.B"
+    PREKEY = "GR.P"
+    KEY = "GR.K"
+    MASK = "GR.M"
+    GENRAND = "GR.GR"
+    ROBUSTREC = "GR.RR"
+    TRANS = "GR.TR"
+    APREP = "GR.AP"
     
 class CP:
     def __init__(self, g, h, ZR):
@@ -128,8 +132,8 @@ class Rand:
         return self
 
     async def acss_step(self, outputs, values, acss_signal):
-        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
-        acsstag = ADKGMsgType.ACSS
+        # 这里 RANDMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+        acsstag = RANDMsgType.ACSS
         acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
         self.acss = ACSS(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, acsssend, acssrecv, self.pc, self.ZR, self.G1
                          )
@@ -246,7 +250,7 @@ class Rand:
         async def _setup(j):
             
             # starting RBC
-            rbctag =ADKGMsgType.RBC + str(j) # (R, msg)
+            rbctag =RANDMsgType.RBC + str(j) # (R, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
             rbc_input = None
@@ -275,7 +279,7 @@ class Rand:
                 )
             )
 
-            abatag = ADKGMsgType.ABA + str(j) # (B, msg)
+            abatag = RANDMsgType.ABA + str(j) # (B, msg)
             # abatag = j # (B, msg)
             abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
 
@@ -388,26 +392,6 @@ class Rand:
         self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
-        
-        # rounds = 2
-        # # acss_signal = asyncio.Event()
-        # acss_signals = [asyncio.Event() for _ in range(rounds)]
-        # # 这个循环目前只能运行一轮，运行到第二轮的时候就卡住了，目前不知道原因
-        # self.acss_tasks_rounds = [None] * rounds
-        # for i in range(rounds): 
-        #     acss_outputs.append({})
-        #     if i == rounds - 1: 
-        #         values = [self.ZR.rand()]
-        #         # rand_num = w - i * (self.n - self.t)
-        #         self.acss_tasks_rounds[i] = asyncio.create_task(self.acss_step(acss_outputs[i], values, acss_signals[i]))
-        #         await acss_signals[i].wait()
-        #         acss_signals[i].clear()
-        #     else: 
-        #         values = [self.ZR.rand()]
-        #         # rand_num = self.n - self.t
-        #         self.acss_tasks_rounds[i] = asyncio.create_task(self.acss_step(acss_outputs[i], values, acss_signals[i]))
-        #         await acss_signals[i].wait()
-        #         acss_signals[i].clear()
         
         key_proposal = list(acss_outputs.keys())
 

@@ -33,7 +33,7 @@ async def robust_reconstruct(field_futures, field, n, t, point, degree):
             return polynomials_over(field)(polys[0]), errors
     return None, None
 
-def robust_reconstruct_admpc(shares_list, key_proposal, field, t, point, degree):
+async def robust_reconstruct_admpc(shares_list, key_proposal, field, t, point, degree):
     use_omega_powers = point.use_omega_powers
     enc = EncoderFactory.get(
         point, Algorithm.FFT if use_omega_powers else Algorithm.VANDERMONDE

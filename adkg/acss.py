@@ -176,7 +176,6 @@ class ACSS:
         # deserializing commitments
         com_size = g_size*(self.t+1)*(self.rand_num)
         commits_all = self.sr.deserialize_gs(proposal[0:com_size])
-        print(f"commits_all: {commits_all}")
         commits = [commits_all[i*(self.t+1):(i+1)*(self.t+1)] for i in range(self.rand_num)]
 
         # deserializing ciphertexts
@@ -888,7 +887,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal(_m)
-            print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
+            print(f"original avss my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()
@@ -916,68 +915,7 @@ class ACSS:
         self.tagvars[acsstag] = {}
         del self.tagvars[acsstag]
 
-    async def avss_tran(self, avss_id, values=None, dealer_id=None):
-        """
-        An acss with share recovery
-        """
-        # If `values` is passed then the node is a 'Sender'
-        # `dealer_id` must be equal to `self.my_id`
-        self.len_values = len(values[0])
-        if values is not None:
-            if dealer_id is None:
-                dealer_id = self.my_id
-            assert dealer_id == self.my_id, "Only dealer can share values."
-        # If `values` is not passed then the node is a 'Recipient'
-        # Verify that the `dealer_id` is not the same as `self.my_id`
-        elif dealer_id is not None:
-            assert dealer_id != self.my_id
-        assert type(avss_id) is int
-
-        n = self.n
-        rbctag = f"{dealer_id}-{avss_id}-B-RBC"
-        acsstag = f"{dealer_id}-{avss_id}-B-AVSS"
-
-        self.tagvars[acsstag] = {}
-        self.tagvars[acsstag]['tasks'] = []
-
-        broadcast_msg = None
-        if self.my_id == dealer_id:
-            # 这里的做法是把每个节点的份额用那个节点的公钥加密，然后打包在一起，放到 broadcast_msg 这个消息里，通过广播信道广播出去
-            broadcast_msg = self._get_dealer_msg_trans(values, n)
-
-        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
-        logger.debug("[%d] Starting reliable broadcast", self.my_id)
-
-        async def predicate(_m):
-            dispersal_msg, commits, ephkey = self.decode_proposal_trans(_m)
-            print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
-            return self.verify_proposal_trans(dealer_id, dispersal_msg, commits, ephkey)
-        
-        output = asyncio.Queue()
-        asyncio.create_task(
-        optqrbc(
-            rbctag,
-            self.my_id,
-            self.n,
-            self.t,
-            dealer_id,
-            predicate,
-            broadcast_msg,
-            output.put_nowait,
-            send,
-            recv,
-        ))
-        rbc_msg = await output.get()
-
-        # avss processing
-        # logger.debug("starting acss")
-        await self._process_avss_msg_trans(avss_id, dealer_id, rbc_msg)
-        
-        for task in self.tagvars[acsstag]['tasks']:
-            task.cancel()
-        self.tagvars[acsstag] = {}
-        del self.tagvars[acsstag]
-    
+   
     async def avss_trans(self, avss_id, len_values, values=None, dealer_id=None):
         """
         An acss with share recovery
@@ -1014,7 +952,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal_trans(_m)
-            print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
+            print(f"protocol trans my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal_trans(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()
@@ -1075,7 +1013,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal_aprep(_m)
-            print(f"my id: {self.my_id} dealer id: {dealer_id} commits: {commits}")
+            print(f"protocol aprep my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()

@@ -414,6 +414,7 @@ class ADKG:
         acss_signal.clear()
         acss_time = time.time() - acss_start_time
         self.benchmark_logger.info(f"ACSS time: {(acss_time)}")
+
         key_proposal = list(acss_outputs.keys())
         # 这一步是 MVBA 的过程
         create_acs_task = asyncio.create_task(self.agreement(key_proposal, acss_outputs, acss_signal))
@@ -426,4 +427,4 @@ class ADKG:
         self.output_queue.put_nowait((values[1], mks, sk, pk))
         
         self.benchmark_logger.info("ADKG time: %f", adkg_time)
-        logging.info(f"ADKG finished! Node {self.my_id}, time: {adkg_time} (seconds)")
+        logging.info(f"ADKG finished! Node {self.my_id}, ACSS time: {(acss_time)} time: {adkg_time} (seconds)")

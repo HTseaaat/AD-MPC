@@ -331,13 +331,13 @@ class APREP:
         for i in range(cm): 
             d_list += d[i]
             e_list += e[i]
-        robust_rec_sig = asyncio.Event()
-        robust_rec_d = await self.robust_rec_step(d_list, robust_rec_sig)
-        await robust_rec_sig.wait()
-        robust_rec_sig.clear()    
-        robust_rec_e = await self.robust_rec_step(e_list, robust_rec_sig)
-        await robust_rec_sig.wait()
-        robust_rec_sig.clear()   
+        rec_list = d_list + e_list
+        robust_rec = await self.robust_rec_step(rec_list, 3)
+        # robust_rec_d = await self.robust_rec_step(d_list, robust_rec_sig)
+  
+        # robust_rec_e = await self.robust_rec_step(e_list, robust_rec_sig)
+        robust_rec_d = robust_rec[:int(len(robust_rec)/2)]
+        robust_rec_e = robust_rec[int(len(robust_rec)/2):]
         
         rec_d = [[self.ZR(0) for _ in range(self.t)] for _ in range(cm)]
         rec_e = [[self.ZR(0) for _ in range(self.t)] for _ in range(cm)]
@@ -418,15 +418,18 @@ class APREP:
                 rand_signal.set()
                 return rand_outputs
             
-    async def robust_rec_step(self, rec_shares, rec_signal):                
+    async def robust_rec_step(self, rec_shares, index):                
         
-        self.rectasks = [None] * len(rec_shares)
-        for i in range(len(rec_shares)): 
-            self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec(i, rec_shares[i]))
-        rec_values = await asyncio.gather(*self.rectasks)
-        print(f"my id: {self.my_id} rec_values: {rec_values}")
+        # self.rectasks = [None] * len(rec_shares)
+        # for i in range(len(rec_shares)): 
+        #     self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec(i, rec_shares[i]))
+        # rec_values = await asyncio.gather(*self.rectasks)
+        # print(f"my id: {self.my_id} rec_values: {rec_values}")
 
-        rec_signal.set()
+        # rec_signal.set()
+
+        rec_values = await self.rec.batch_run_robust_rec(index, rec_shares)
+
         return rec_values
         
     
@@ -463,9 +466,11 @@ class APREP:
         aprep_values = (mult_triples, chec_triples, cm)      
 
         # 这一步是 acss 的过程
+        # aprep_acss_start_time = time.time()
         self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, aprep_values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
+        # print(f"aprep_acss_time: {time.time()-aprep_acss_start_time}")
         # print("acss_outputs: ", acss_outputs)
 
         # 这两步可以放到调用 robust-rec 之前
@@ -476,12 +481,12 @@ class APREP:
 
         # 这里调用 Protocol Robust-Rec 来重构出刚才生成的随机数的原始值
         # robust_rec_outputs = []
-        robust_rec_signal = asyncio.Event()
+        tes_time = time.time()
+        robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, 0)
+        print(f"tes_time: {time.time()-tes_time}")
 
-        robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, robust_rec_signal)
-
-        await robust_rec_signal.wait()
-        robust_rec_signal.clear()
+        
+        
         # print(f"robust_rec_outputs: {robust_rec_outputs}")
 
         # 这一步我们需要用 chec_triples 来验证 mult_triples 中的三元组是否 c = a * b
@@ -511,14 +516,18 @@ class APREP:
             rho_list += rho[i]
             sigma_list += sigma[i]
         # 这里调用 Robust-Rec 协议重构 rho 和 sigma
-        robust_rec_rho = await self.robust_rec_step(rho_list, robust_rec_signal)
-        await robust_rec_signal.wait()
-        robust_rec_signal.clear()
-        robust_rec_sigma = await self.robust_rec_step(sigma_list, robust_rec_signal)
-        await robust_rec_signal.wait()
-        robust_rec_signal.clear() 
+        aprep_rec_start_time = time.time()
+        rec_list = rho_list + sigma_list
+        robust_rec = await self.robust_rec_step(rec_list, 1)
+        # robust_rec_rho = await self.robust_rec_step(rho_list, robust_rec_signal)
+        
+        # robust_rec_sigma = await self.robust_rec_step(sigma_list, robust_rec_signal)
+        
+        print(f"aprep_rec_time: {time.time()-aprep_rec_start_time}")
         # print(f"robust_rec_rho: {robust_rec_rho}")
 
+        robust_rec_rho = robust_rec[:int(len(robust_rec)/2)]
+        robust_rec_sigma = robust_rec[int(len(robust_rec)/2):]
         rec_rho = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         rec_sigma = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         for node in range(len(acss_outputs)): 
@@ -535,9 +544,8 @@ class APREP:
         tau_list = []
         for i in range(len(acss_outputs)): 
             tau_list += tau[i]
-        robust_rec_tau = await self.robust_rec_step(tau_list, robust_rec_signal)
-        await robust_rec_signal.wait()
-        robust_rec_signal.clear()
+        robust_rec_tau = await self.robust_rec_step(tau_list, 2)
+        
         print(f"robust_rec_tau: {robust_rec_tau}")
         rec_tau = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         for node in range(len(acss_outputs)): 
@@ -562,7 +570,7 @@ class APREP:
         output = await key_task
         await asyncio.gather(*work_tasks)
         # mks, sk, pk = output
-        mks, new_mult_triples = output
+        new_mult_triples = output
         # self.output_queue.put_nowait((values[1], mks, sk, pk))
         # self.output_queue.put_nowait(new_mult_triples)
         return new_mult_triples

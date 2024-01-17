@@ -3,10 +3,12 @@ from pytest import mark, fixture
 import logging
 from adkg.polynomial import polynomials_over
 from adkg.adkg import ADKG
+from adkg.admpc import ADMPC
 import asyncio
 import numpy as np
 import uvloop
 asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+from pypairing import ZR, G1, blsmultiexp as multiexp, dotprod  
 # from pypairing import ZR, G1, blsmultiexp as multiexp, dotprod
 # from pypairing import Curve25519ZR as ZR, Curve25519G as G1, curve25519multiexp as multiexp, curve25519dotprod as dotprod
     
@@ -57,10 +59,9 @@ async def test_adkg(test_router, num, ths, deg, curve):
     deg = int(deg)
     n = int(num)
 
-    if curve == "bls12381":
-        from pypairing import ZR, G1, blsmultiexp as multiexp, dotprod  
-    else:
-        from pypairing import Curve25519ZR as ZR, Curve25519G as G1, curve25519multiexp as multiexp, curve25519dotprod as dotprod
+   
+        
+   
     
     assert n > 3*t and deg < n-t
     
@@ -74,17 +75,30 @@ async def test_adkg(test_router, num, ths, deg, curve):
     dkg_tasks = [None] * n # async task for adkg
     dkg_list = [None] * n #
 
+    dkg_tasks2 = [None] * n # async task for adkg
+    dkg_list2 = [None] * n #
+    g2, h2, pks2, sks2 = get_avss_params(n, G1, ZR)
+    sends2, recvs2, _ = test_router(n, maxdelay=0.01)
+
     start_time = time.time()
     curve_params = (ZR, G1, multiexp, dotprod)
 
     for i in range(n):
         dkg = ADKG(pks, sks[i], g, h, n, t, deg, i, sends[i], recvs[i], pc, curve_params, (mat1, mat2))
+        # admpc = ADMPC(pks, sks[i], g, h, n, t, deg, i, sends, recvs, pc, curve_params, mat1)
         dkg_list[i] = dkg
         dkg_tasks[i] = asyncio.create_task(dkg.run_adkg(start_time))
+        dkg2 = ADKG(pks2, sks2[i], g2, h2, n, t, deg, i, sends2[i], recvs2[i], pc, curve_params, (mat1, mat2))
+        dkg_list2[i] = dkg2
+        dkg_tasks2[i] = asyncio.create_task(dkg2.run_adkg(start_time))
     
-    outputs = await asyncio.gather(
-        *[dkg_list[i].output_queue.get() for i in range(n)]
-    )
+    # outputs = await asyncio.gather(
+    #     *[dkg_list[i].output_queue.get() for i in range(n)]
+    # )
+    await asyncio.gather(*dkg_tasks2, *dkg_tasks)
+    # await asyncio.gather(*dkg_tasks)
+
+
     for dkg in dkg_list:
         dkg.kill()
     for task in dkg_tasks:

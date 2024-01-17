@@ -24,15 +24,17 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.NOTSET)
 
-class ADKGMsgType:
-    ACSS = "A"
-    RBC = "R"
-    ABA = "B"
-    PREKEY = "P"
-    KEY = "K"
-    MASK = "M"
-    GENRAND = "GR"
-    ROBUSTREC = "RR"
+class TRANSMsgType:
+    ACSS = "TR.A"
+    RBC = "TR.R"
+    ABA = "TR.B"
+    PREKEY = "TR.P"
+    KEY = "TR.K"
+    MASK = "TR.M"
+    GENRAND = "TR.GR"
+    ROBUSTREC = "TR.RR"
+    TRANS = "TR.TR"
+    APREP = "TR.AP"
     
 class CP:
     def __init__(self, g, h, ZR):
@@ -97,7 +99,6 @@ class Trans:
         self.sc = ceil((deg+1)/(t+1)) + 1
         self.send, self.recv, self.pc = (send, recv, pc)
         self.ZR, self.G1, self.multiexp, self.dotprod = curve_params
-        print(f"type(self.ZR): {type(self.ZR)}")
         self.poly = polynomials_over(self.ZR)
         self.poly.clear_cache() #FIXME: Not sure why we need this.
         # Create a mechanism to split the `recv` channels based on `tag`
@@ -109,7 +110,7 @@ class Trans:
         self.get_send = _send
         self.output_queue = asyncio.Queue()
 
-        rectag = ADKGMsgType.ROBUSTREC
+        rectag = TRANSMsgType.ROBUSTREC
         recsend, recrecv = self.get_send(rectag), self.subscribe_recv(rectag)
         curve_params = (self.ZR, self.G1, self.multiexp, self.dotprod)
         self.rec = Robust_Rec(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, recsend, recrecv, self.pc, curve_params)
@@ -137,7 +138,7 @@ class Trans:
         return self
 
     async def acss_step(self, outputs, trans_values, acss_signal):
-        acsstag = ADKGMsgType.ACSS
+        acsstag = TRANSMsgType.ACSS
         acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
         self.acss = ACSS(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, acsssend, acssrecv, self.pc, self.ZR, self.G1
                          , self.rbcl_list
@@ -226,7 +227,7 @@ class Trans:
 
         rbc_signal.set()
     
-    async def agreement(self, key_proposal, de_masked_value, index, acss_outputs, acss_signal):
+    async def agreement(self, key_proposal, de_masked_value, acss_outputs, acss_signal):
         aba_inputs = [asyncio.Queue() for _ in range(self.n)]
         aba_outputs = [asyncio.Queue() for _ in range(self.n)]
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
@@ -243,19 +244,24 @@ class Trans:
             print(f"de_masked_value: {de_masked_value}")
             if len(kpl) <= self.t:
                 return False
+            
             GFEG1 = GF(Subgroup.BLS12_381)
             point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
-            poly, err = robust_reconstruct_admpc(de_masked_value, kpl, GFEG1, self.t, point, self.t)
-            if len(err) != 0: 
-                return False          
+            poly, err = [None] * len(de_masked_value), [None] * len(de_masked_value)
+            for i in range(len(de_masked_value)): 
+                poly[i], err[i] = await robust_reconstruct_admpc(de_masked_value[i], key_proposal, GFEG1, self.t, point, self.t)
+            err_list = [list(err[i]) for i in range(len(err))]
+            for i in range(len(err_list)): 
+                if len(err_list[i]) != 0: 
+                    return False         
         
             return True
 
         async def _setup(j):
             
             # starting RBC
-            rbctag = str(index) + ADKGMsgType.RBC + str(j) # (R, msg)
-            # rbctag = ADKGMsgType.RBC + str(j)
+            rbctag = TRANSMsgType.RBC + str(j) # (R, msg)
+            # rbctag = TRANSMsgType.RBC + str(j)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
             rbc_input = None
@@ -282,8 +288,8 @@ class Trans:
                 )
             )
 
-            abatag = str(index) + ADKGMsgType.ABA + str(j) # (B, msg)
-            # abatag = ADKGMsgType.ABA + str(j)
+            abatag = TRANSMsgType.ABA + str(j) # (B, msg)
+            # abatag = TRANSMsgType.ABA + str(j)
             # abatag = j # (B, msg)
             abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
 
@@ -325,12 +331,11 @@ class Trans:
                 rbc_signal,
                 acss_outputs,
                 acss_signal, 
-                index
             ),
             work_tasks,
         )
 
-    async def new_share(self, rbc_values, rbc_signal, acss_outputs, acss_signal, index):
+    async def new_share(self, rbc_values, rbc_signal, acss_outputs, acss_signal):
         await rbc_signal.wait()
         rbc_signal.clear()
 
@@ -355,22 +360,35 @@ class Trans:
         # print("acss_outputs[0]['shares']['msg'][idx+1]: ", acss_outputs[0]['shares']['msg'])
 
         # 这几步就是每个节点把 shares 随机数，还有承诺提取到这几个二维列表里
-        secrets = [self.ZR(0)] * self.n 
+        mks_list = list(self.mks)
+        secrets_num = len(acss_outputs[mks_list[0]]['shares']['msg'])
+        secrets = [[self.ZR(0) for _ in range(self.n)] for _ in range(secrets_num)]
+        # secrets = [self.ZR(0)] * self.n 
+
+        for i in range(secrets_num): 
+            for node in range(self.n): 
+                if node in self.mks: 
+                    secrets[i][node] = acss_outputs[node]['shares']['msg'][i]
         
-        for node in range(self.n):
-            if node in self.mks:
-                secrets[node] = acss_outputs[node]['shares']['msg'][index]
-                print(f"secret[{node}] = {secrets[node]}")
+        # for node in range(self.n):
+        #     if node in self.mks:
+        #         secrets[node] = acss_outputs[node]['shares']['msg'][index]
+        #         print(f"secret[{node}] = {secrets[node]}")
                     
 
         sc_shares = []
-        for i in self.mks:
-            sc_shares.append([i+1, secrets[i]])
+        for i in range(secrets_num): 
+            sc_shares.append([])
+            for j in self.mks:
+                sc_shares[i].append([j+1, secrets[i][j]])
 
         print(f"my id: {self.my_id} sc_shares: {sc_shares}")
 
         # 这里测试的就是在得到公共子集之后重构新的 shares 
-        res = self.poly.interpolate_at(sc_shares, 0)
+        res = []
+        for i in range(secrets_num):
+            res.append(self.poly.interpolate_at(sc_shares[i], 0))
+        # res = self.poly.interpolate_at(sc_shares, 0)
         print(f"my id: {self.my_id} res: {res}")
 
         return res
@@ -390,7 +408,7 @@ class Trans:
 
         async def _setup(j):            
             # starting RBC
-            rbctag =ADKGMsgType.MASK + str(j) # (M, msg)
+            rbctag =TRANSMsgType.MASK + str(j) # (M, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
             rbc_input = None
@@ -451,7 +469,9 @@ class Trans:
         acss_signal = asyncio.Event()
         # 这里 我们把要传入的参数放到一个集合中再传入 acss
         trans_values = (values, values_hat)
-        await self.acss_step(acss_outputs, trans_values, acss_signal)
+        test = asyncio.create_task(self.acss_step(acss_outputs, trans_values, acss_signal))
+        await test
+        # await self.acss_step(acss_outputs, trans_values, acss_signal)
         # self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, trans_values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
@@ -470,11 +490,22 @@ class Trans:
 
         GFEG1 = GF(Subgroup.BLS12_381)
         point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
-        poly, err, err_list, GT = [None] * len(values), [None] * len(values), [None] * len(values), [None] * len(values)
+        poly, err = [None] * len(values), [None] * len(values)
         for i in range(len(values)): 
-            poly[i], err[i] = robust_reconstruct_admpc(de_masked_values[i], LT, GFEG1, self.t, point, self.t)
-            err_list[i] = list(err[i])
-            GT[i] = [j for j in range(self.n) if j not in err_list[i]]
+            poly[i], err[i] = await robust_reconstruct_admpc(de_masked_values[i], LT, GFEG1, self.t, point, self.t)
+            # err_list[i] = list(err[i])
+            # GT[i] = [j for j in range(self.n) if j not in err_list[i]]
+
+        err_list = [list(err[i]) for i in range(len(err))]
+
+        # 这个就是通过鲁棒性插值找到的 2t+1 的集合
+        for i in range(len(err_list)): 
+            if len(err_list[i]) == 0: 
+                continue
+            else: 
+                for j in range(len(err_list[i])): 
+                    LT.pop(err_list[i][j])
+        GT = LT
 
 
         # 这一步是 MVBA 的过程
@@ -482,19 +513,25 @@ class Trans:
         # 这里的话我们先只允许一个trans 一个值
         # create_acs_task = asyncio.create_task(self.agreement(GT[0], de_masked_values[0], 0, acss_outputs, acss_signal))
         # create_acs_task = asyncio.create_task(self.agreement(GT[0], de_masked_values, i, acss_outputs, acss_signal))
-        create_acs_tasks = [None] * len(values)
-        for i in range(len(values)): 
-            create_acs_tasks[i] = asyncio.create_task(self.agreement(GT[i], de_masked_values[i], i, acss_outputs, acss_signal))
+        # create_acs_tasks = [None] * len(values)
+        # for i in range(len(values)): 
+        #     create_acs_tasks[i] = asyncio.create_task(self.agreement(GT[i], de_masked_values[i], i, acss_outputs, acss_signal))
         
+        create_acs_task = asyncio.create_task(self.agreement(GT, de_masked_values, acss_outputs, acss_signal))
+
+        acs, key_task, work_tasks = await create_acs_task
+        await acs
+        output = await key_task
+        await asyncio.gather(*work_tasks)
+
+        # agreement_results = await asyncio.gather(*create_acs_tasks)
+        # acs = [result[0] for result in agreement_results]
+        # key_task = [result[1] for result in agreement_results]
+        # work_tasks = [result[2] for result in agreement_results]
         
-        agreement_results = await asyncio.gather(*create_acs_tasks)
-        acs = [result[0] for result in agreement_results]
-        key_task = [result[1] for result in agreement_results]
-        work_tasks = [result[2] for result in agreement_results]
-        
-        # acs, key_task, work_tasks = await asyncio.gather(*create_acs_tasks)
-        await asyncio.gather(*acs)
-        output = await asyncio.gather(*key_task)
+        # # acs, key_task, work_tasks = await asyncio.gather(*create_acs_tasks)
+        # await asyncio.gather(*acs)
+        # output = await asyncio.gather(*key_task)
         # await asyncio.gather(*work_tasks)
         new_shares = output
         

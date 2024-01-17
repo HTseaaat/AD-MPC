@@ -39,7 +39,6 @@ def mysum(iterable):
 
 
 def polynomials_over(field):
-    print(f"type(field): {type(field)}")
     assert type(field) is GF or field == ZR or field == bpZR
     field_type = GFElement if type(field) is GF else field
     # field_type = field
@@ -163,9 +162,6 @@ def polynomials_over(field):
             if y0 is not None:
                 if type(y0) is int:
                     y0 = field(y0)
-
-                print(f"type(y0): {type(y0)}")
-                print(f"field_type: {field_type}")
                 assert type(y0) is field_type
                 coeffs[0] = y0
             return cls(coeffs)
