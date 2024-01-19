@@ -414,7 +414,7 @@ class APREP:
             rand_outputs = await self.rand_task
 
             if len(rand_outputs) == rand_num: 
-                print(f"my id: {self.my_id} rand_outputs: {rand_outputs}")
+                # print(f"my id: {self.my_id} rand_outputs: {rand_outputs}")
                 rand_signal.set()
                 return rand_outputs
             
@@ -483,7 +483,7 @@ class APREP:
         # robust_rec_outputs = []
         tes_time = time.time()
         robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, 0)
-        print(f"tes_time: {time.time()-tes_time}")
+        # print(f"tes_time: {time.time()-tes_time}")
 
         
         
@@ -523,7 +523,7 @@ class APREP:
         
         # robust_rec_sigma = await self.robust_rec_step(sigma_list, robust_rec_signal)
         
-        print(f"aprep_rec_time: {time.time()-aprep_rec_start_time}")
+        # print(f"aprep_rec_time: {time.time()-aprep_rec_start_time}")
         # print(f"robust_rec_rho: {robust_rec_rho}")
 
         robust_rec_rho = robust_rec[:int(len(robust_rec)/2)]
@@ -546,12 +546,12 @@ class APREP:
             tau_list += tau[i]
         robust_rec_tau = await self.robust_rec_step(tau_list, 2)
         
-        print(f"robust_rec_tau: {robust_rec_tau}")
+        # print(f"robust_rec_tau: {robust_rec_tau}")
         rec_tau = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         for node in range(len(acss_outputs)): 
             for i in range(cm): 
                 rec_tau[node][i] = robust_rec_tau[node*cm+i]
-        print(f"rec_tau: {rec_tau}")
+        # print(f"rec_tau: {rec_tau}")
 
         # 这里检查 \tau 是否等于0，如果等于0，就放到 key_proposal 中
         key_proposal = []
@@ -560,7 +560,7 @@ class APREP:
                 if rec_tau[node][i] != self.ZR(0):
                     break
             key_proposal.append(node)
-        print(f"key_proposal: {key_proposal}")
+        # print(f"key_proposal: {key_proposal}")
         
 
         # 这一步是 MVBA 的过程

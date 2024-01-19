@@ -240,8 +240,8 @@ class Trans:
             for ii in range(self.n):
                 if kp.get_bit(ii):
                     kpl.append(ii)
-            print(f"kpl: {kpl}")
-            print(f"de_masked_value: {de_masked_value}")
+            # print(f"kpl: {kpl}")
+            # print(f"de_masked_value: {de_masked_value}")
             if len(kpl) <= self.t:
                 return False
             
@@ -266,7 +266,7 @@ class Trans:
 
             rbc_input = None
             if j == self.my_id: 
-                print(f"key_proposal: {key_proposal}")
+                # print(f"key_proposal: {key_proposal}")
                 riv = Bitmap(self.n)
                 for k in key_proposal: 
                     riv.set_bit(k)
@@ -340,7 +340,7 @@ class Trans:
         rbc_signal.clear()
 
         # 这一步是将所有 rbc_values 转化成一个公共子集 mks
-        print(f"rbc_values: {rbc_values}")
+        # print(f"rbc_values: {rbc_values}")
         self.mks = set() # master key set
         for ks in  rbc_values:
             if ks is not None:
@@ -354,7 +354,7 @@ class Trans:
                 await acss_signal.wait()
                 acss_signal.clear()
 
-        print("mks: ", self.mks)
+        # print("mks: ", self.mks)
 
         # 为什么我们的 shares 会有两个呢，rand 对应的是 phi_hat, 那么 shares 就对应的是 phi ，那为什么会有两个呢
         # print("acss_outputs[0]['shares']['msg'][idx+1]: ", acss_outputs[0]['shares']['msg'])
@@ -382,14 +382,14 @@ class Trans:
             for j in self.mks:
                 sc_shares[i].append([j+1, secrets[i][j]])
 
-        print(f"my id: {self.my_id} sc_shares: {sc_shares}")
+        # print(f"my id: {self.my_id} sc_shares: {sc_shares}")
 
         # 这里测试的就是在得到公共子集之后重构新的 shares 
         res = []
         for i in range(secrets_num):
             res.append(self.poly.interpolate_at(sc_shares[i], 0))
         # res = self.poly.interpolate_at(sc_shares, 0)
-        print(f"my id: {self.my_id} res: {res}")
+        # print(f"my id: {self.my_id} res: {res}")
 
         return res
 
@@ -414,7 +414,7 @@ class Trans:
             rbc_input = None
             if j == self.my_id: 
                 rbc_input = rbc_masked_input
-                print(f"{self.my_id} rbc_input: {rbc_input}")
+                # print(f"{self.my_id} rbc_input: {rbc_input}")
 
             # rbc_outputs[j] = 
             asyncio.create_task(

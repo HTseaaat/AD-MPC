@@ -28,7 +28,8 @@ DOT_SEPARATED_PATH=$(IFS=. ; echo "${DIRS[*]}")
 MODULE_PATH=${DOT_SEPARATED_PATH%???}
 
 NUM_NODES=$2
-CONFIG_PATH="conf/adkg_${NUM_NODES}/local"
+CONFIG_PATH="conf/admpc_${NUM_NODES}/local"
+# CONFIG_PATH="conf/adkg_${NUM_NODES}/local"
 
 CMD="python3 -m ${MODULE_PATH}"
 echo ">>> Command to be executed: '${CMD}'"

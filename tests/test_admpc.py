@@ -44,22 +44,8 @@ def get_avss_params(n, t):
 
 
 def gen_vector(t, n, ZR):
-    # 这里的 coeff 是系数，重点！！也就是论文的逻辑是各方 acss 得到的随机数先跟 Vandermonde Matrix 相乘，再根据不同参与方添加不同的系数 x
-    # 但这里的逻辑是 先提前生成好系数矩阵，再拿系数矩阵与 Vandermonde Matrix 相乘，最后再去乘以 随机数矩阵，得到的输出自然就包含不同参与方的不同系数
-    # coeff_1 = np.array([[ZR(i+1)**j for j in range(t+1)] for i in range(n)])
-    # print(f"coeff_1: {coeff_1}")
-    # coeff_2 = np.array([[ZR(i+1)**j for j in range(t+1, deg+1)] for i in range(n)])
-    # 这里 hm 是 Vandermonde Matrix 
-    # hm_1 = np.array([[ZR(i+1)**j for j in range(n)] for i in range(t+1)])
-    # hm_2 = np.array([[ZR(i+1)**j for j in range(n)] for i in range(deg-t)])
-    # print(f"hm_1: {hm_1}")
-    # rm_1 = np.matmul(coeff_1, hm_1)
-    # rm_2 = np.matmul(coeff_2, hm_2)
-    # print(f"rm_1: {rm_1}")
-    # print(f"rm_1.tolist(): {rm_1.tolist()}")
 
     vm = np.array([[ZR(i+1)**j for j in range(n)] for i in range(n-t)])
-    # print(f"vm: {vm}")
 
     return (vm.tolist())
 

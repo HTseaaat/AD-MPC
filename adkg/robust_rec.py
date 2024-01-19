@@ -149,7 +149,7 @@ class Robust_Rec:
         
         coin_keys = [asyncio.Queue() for _ in range(self.n)]
 
-        print(f"my id: {self.my_id} rec_id: {rec_id}")
+        # print(f"my id: {self.my_id} rec_id: {rec_id}")
 
         # 这里 robust-rec 的谓词应该还需要用鲁棒性插值进行检验
         async def predicate(_key_proposal):
@@ -158,8 +158,8 @@ class Robust_Rec:
             for ii in range(self.n):
                 if kp.get_bit(ii):
                     kpl.append(ii)
-            print(f"kpl: {kpl}")
-            print(f"rbc_shares: {rbc_shares}")
+            # print(f"kpl: {kpl}")
+            # print(f"rbc_shares: {rbc_shares}")
             if len(kpl) <= self.t:
                 return False
             GFEG1 = GF(Subgroup.BLS12_381)
@@ -266,7 +266,7 @@ class Robust_Rec:
                     break
         
         
-        print("mks: ", self.mks)
+        # print("mks: ", self.mks)
         sc_shares = [] 
         for i in range(len(rbc_shares)): 
             sc_shares.append([])
@@ -278,7 +278,7 @@ class Robust_Rec:
         for i in range(len(rbc_shares)): 
             res[i] = self.poly.interpolate_at(sc_shares[i], 0)
         # res = self.poly.interpolate_at(sc_shares, 0)
-        print(f"{self.my_id} res: {res}")
+        # print(f"{self.my_id} res: {res}")
 
         return (self.mks, res)
         
@@ -299,12 +299,12 @@ class Robust_Rec:
         # else: 
         #     serialized_share = sr.serialize_f(self.ZR(1))
         
-        print(f"my id: {self.my_id} rec_id: {rec_id}")
+        # print(f"my id: {self.my_id} rec_id: {rec_id}")
 
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
         
         async def predicate(_m):
-            print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
+            # print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
             return True
 
         async def _setup(j):            
@@ -316,7 +316,7 @@ class Robust_Rec:
             rbc_input = None
             if j == self.my_id: 
                 rbc_input = serialized_shares
-                print(f"my id: {self.my_id} rec_id: {rec_id} rbc_input: {rbc_input}")                                  
+                # print(f"my id: {self.my_id} rec_id: {rec_id} rbc_input: {rbc_input}")                                  
 
             # rbc_outputs[j] = 
             
@@ -381,7 +381,7 @@ class Robust_Rec:
         await asyncio.gather(*work_tasks)
         
         mks, rec_values = output
-        print(f"my id: {self.my_id} rec_value: {rec_values}")
+        # print(f"my id: {self.my_id} rec_value: {rec_values}")
 
 
         # self.output_queue.put_nowait(rec_value)
@@ -404,12 +404,12 @@ class Robust_Rec:
         # else: 
         #     serialized_share = sr.serialize_f(self.ZR(1))
         
-        print(f"my id: {self.my_id} rec_id: {rec_id}")
+        # print(f"my id: {self.my_id} rec_id: {rec_id}")
 
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
         
         async def predicate(_m):
-            print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
+            # print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
             return True
 
         async def _setup(j):            
@@ -421,7 +421,7 @@ class Robust_Rec:
             rbc_input = None
             if j == self.my_id: 
                 rbc_input = serialized_share
-                print(f"my id: {self.my_id} rec_id: {rec_id} rbc_input: {rbc_input}")                                  
+                # print(f"my id: {self.my_id} rec_id: {rec_id} rbc_input: {rbc_input}")                                  
 
             # rbc_outputs[j] = 
             
@@ -474,7 +474,7 @@ class Robust_Rec:
         await asyncio.gather(*work_tasks)
         
         mks, rec_value = output
-        print(f"my id: {self.my_id} rec_value: {rec_value}")
+        # print(f"my id: {self.my_id} rec_value: {rec_value}")
 
 
         # self.output_queue.put_nowait(rec_value)

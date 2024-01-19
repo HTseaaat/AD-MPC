@@ -628,10 +628,10 @@ class ACSS:
             dispersal_msg_list.extend(ciphertext)
 
         g_commits = []
-        print(f"g_commits: {g_commits}")
+        # print(f"g_commits: {g_commits}")
         for k in range(self.rand_num):
             g_commits = g_commits + commitments[k]
-        print(f"g_commits: {g_commits}")
+        # print(f"g_commits: {g_commits}")
         datab = self.sr.serialize_gs(g_commits) # Serializing commitments
         # print(f"datab commits all: {datab}")
         # print(f"len commits all: {len(datab)}")
@@ -887,7 +887,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal(_m)
-            print(f"original avss my id: {self.my_id} dealer id: {dealer_id}")
+            # print(f"original avss my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()
@@ -952,7 +952,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal_trans(_m)
-            print(f"protocol trans my id: {self.my_id} dealer id: {dealer_id}")
+            # print(f"protocol trans my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal_trans(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()
@@ -1013,7 +1013,7 @@ class ACSS:
 
         async def predicate(_m):
             dispersal_msg, commits, ephkey = self.decode_proposal_aprep(_m)
-            print(f"protocol aprep my id: {self.my_id} dealer id: {dealer_id}")
+            # print(f"protocol aprep my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
         
         output = asyncio.Queue()

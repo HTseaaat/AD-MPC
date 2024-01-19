@@ -39,8 +39,10 @@ def mysum(iterable):
 
 
 def polynomials_over(field):
+    # 如果调用 admpc 取消下面两行的注释，注释掉第三行
     assert type(field) is GF or field == ZR or field == bpZR
     field_type = GFElement if type(field) is GF else field
+    # 如果调用 adkg 取消下面这行的注释，注释掉上面两行
     # field_type = field
     if field in _poly_cache:
         return _poly_cache[field]
