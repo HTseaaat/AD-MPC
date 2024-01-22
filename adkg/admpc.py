@@ -203,7 +203,7 @@ class ADMPC:
         step1_start_time = time.time()
         gate_outputs = await self.run_computation(inputs, gate_tape, mult_triples)
         step1_time = time.time() - step1_start_time
-
+        print(f"step 1 output: {gate_outputs}")
 
         # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
         # w 是需要生成的随机数的数量
@@ -220,6 +220,7 @@ class ADMPC:
         rand = Rand(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, randsend, randrecv, self.pc, self.curve_params, self.matrix)
         rand_shares = await rand.run_rand(w, rounds)
         step2_time = time.time() - step2_start_time
+        print(f"step 2 output: {rand_shares}")
         # print(f"rand_shares: {rand_shares}")
 
         # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组
@@ -231,6 +232,7 @@ class ADMPC:
         aprep = APREP(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, aprepsend, apreprecv, self.pc, self.curve_params, self.matrix)
         new_mult_triples = await aprep.run_aprep(cm)
         step3_time = time.time() - step3_start_time
+        print(f"step 3 output: {new_mult_triples}")
         print(f"time: {step3_time}")
         # print(f"new_mult_triples: {new_mult_triples}")
 
@@ -242,6 +244,7 @@ class ADMPC:
         trans = Trans(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, transsend, transrecv, self.pc, self.curve_params)
         new_shares = await trans.run_trans(gate_outputs, rand_values)
         step4_time = time.time() - step4_start_time
+        print(f"step 4 output: {new_shares}")
         print(f"time: {step4_time}")
         # print(new_shares)
         # parallel_start_time = time.time()

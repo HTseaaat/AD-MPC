@@ -2,6 +2,9 @@ version: '3.4'
 
 services:
   adkg:
+  # 这里加了一个端口映射
+    ports:
+      - "7001:7001"
     build:
       context: .
       dockerfile: Dockerfile

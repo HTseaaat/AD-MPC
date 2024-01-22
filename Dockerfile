@@ -55,6 +55,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmpfr-dev \
     libssl-dev \
     openssl \ 
+    # 在这里加了一个 openssh 和 tmux 的安装
+    tmux \
+    openssh-server \    
     sudo 
 
 # Setup virtualenv
