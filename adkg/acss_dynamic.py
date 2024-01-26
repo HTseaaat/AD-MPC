@@ -1083,7 +1083,7 @@ class ACSS_Pre(ACSS):
         logger.debug("[%d] Starting reliable broadcast", self.my_id)
 
         async def predicate(_m):
-            # print(f"my layer ID: {self.rand_instance.mpc_instance.layer_ID} rbctag: {rbctag}, send: {send}, recv: {recv}")
+            print(f"my layer ID: {self.rand_instance.mpc_instance.layer_ID} rbctag: {rbctag}, send: {send}, recv: {recv}")
             dispersal_msg, commits, ephkey = self.decode_proposal(_m)
             return self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
         
@@ -1208,7 +1208,7 @@ class ACSS_Foll(ACSS):
         async def predicate(_m):
             # print(f"my layer ID: {self.rand_instance.mpc_instance.layer_ID}")
             dispersal_msg, commits, ephkey = self.decode_proposal(_m)
-            # print(f"my layer ID: {self.rand_instance.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
+            print(f"my layer ID: {self.rand_instance.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
 
         # 下一层也运行optrbc ，接受到上一层optrbc的结果
@@ -1262,6 +1262,8 @@ class ACSS_Foll(ACSS):
             ))
 
         # signal = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID - 1][dealer_id].Signal
+
+        print(f"layer ID: {self.rand_instance.mpc_instance.layer_ID} rbctag: {rbctag}, send: {send} recv: {recv}")
 
         rbc_msg = await output.get()
 

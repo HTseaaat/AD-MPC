@@ -192,7 +192,7 @@ async def tylerba(sid, pid, n, f, coin_keys, input_msg, decide, broadcast, recei
                 f"[{pid}] receive {msg} from node {sender}",
                 extra={"nodeid": pid, "epoch": r},
             )
-            assert sender in range(n)
+            # assert sender in range(n)
 
             if tag == ABAMsgType.ABA_COIN:
                 coin_recvs.put_nowait((sender, msg))

@@ -6,7 +6,7 @@ import hashlib, time
 from math import ceil
 import logging
 from adkg.utils.bitmap import Bitmap
-from adkg.acss import ACSS, ACSS_Pre, ACSS_Foll
+from adkg.acss_dynamic import ACSS, ACSS_Pre, ACSS_Foll
 
 from adkg.broadcast.tylerba import tylerba
 from adkg.broadcast.optqrbc import optqrbc, optqrbc_dynamic
