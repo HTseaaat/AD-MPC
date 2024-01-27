@@ -358,19 +358,19 @@ class ADMPC_Dynamic(ADMPC):
 
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
-            w = 3
-            if w > self.n - self.t: 
-                rounds = math.ceil(w / (self.n - self.t))
-            else: 
-                rounds = 1
+            # w = 3
+            # if w > self.n - self.t: 
+            #     rounds = math.ceil(w / (self.n - self.t))
+            # else: 
+            #     rounds = 1
 
-            randtag = ADMPCMsgType.GENRAND
-            randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+            # randtag = ADMPCMsgType.GENRAND
+            # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
 
-            rand_Pre = Rand_Pre(self.public_keys, self.private_key, 
-                                self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                                randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            rand_Pre_task = asyncio.create_task(rand_Pre.run_rand(w, rounds))
+            # rand_Pre = Rand_Pre(self.public_keys, self.private_key, 
+            #                     self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+            #                     randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            # rand_Pre_task = asyncio.create_task(rand_Pre.run_rand(w, rounds))
 
             # clients step 3 调用 Aprep 协议传递三元组给下一层
             cm = 2
@@ -378,24 +378,38 @@ class ADMPC_Dynamic(ADMPC):
             apreptag = ADMPCMsgType.APREP
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
-            aprep = APREP_Pre(self.public_keys, self.private_key, 
+            aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
                           self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                           aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            new_mult_triples = await aprep.run_aprep(cm)
+            aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
 
 
         else:
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
-            randtag = ADMPCMsgType.GENRAND
-            randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
-            rand_foll = Rand_Foll(self.public_keys, self.private_key, 
-                                  self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                                  randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
-            w, rounds = 3, 1           
-            rand_shares = await rand_foll.run_rand(w, rounds)
+            # 这是 step 2 接收上一层的随机数
+            # randtag = ADMPCMsgType.GENRAND
+            # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+            # rand_foll = Rand_Foll(self.public_keys, self.private_key, 
+            #                       self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+            #                       randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            # # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
+            # w, rounds = 3, 1           
+            # rand_shares = await rand_foll.run_rand(w, rounds)
             
-            print(f"rand_shares: {rand_shares}")
+            # print(f"rand_shares: {rand_shares}")
+
+            # 这是 step 3 接收上一层的三元组
+            apreptag = ADMPCMsgType.APREP
+            aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+
+            aprep_foll = APREP_Foll(self.public_keys, self.private_key, 
+                          self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                          aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+
+            # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
+            cm = 2
+            new_mult_triples = await aprep_foll.run_aprep(cm)
+
 
         # 这里是 execution stage 的 step 1，执行当前层的计算
             # gate_outputs = await self.run_computation(inputs, gate_tape, mult_triples)

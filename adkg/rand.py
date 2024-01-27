@@ -393,7 +393,7 @@ class Rand_Pre(Rand):
         self.acss = ACSS_Pre(pks_next_layer, 
                              self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
                              acsssend, acssrecv, self.pc, self.ZR, self.G1, 
-                             rand_instance=self
+                             mpc_instance=self.mpc_instance
                          )
         self.acss_tasks = [None] * self.n
         # 在上一层中只需要创建一次avss即可        
@@ -670,17 +670,14 @@ class Rand_Foll(Rand):
         for dealer_id in range(self.n): 
             # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
             acsstag = RANDMsgType.ACSS + str(self.mpc_instance.layer_ID - 1) + str(dealer_id)
-            # acsstag = RANDMsgType.ACSS + str(self.mpc_instance.layer_ID-1) + str(dealer_id)
             acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
 
             # 此时传递的是本层的公私钥
             self.acss = ACSS_Foll(self.public_keys, self.private_key, 
                                 self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
                                 acsssend, acssrecv, self.pc, self.ZR, self.G1, 
-                                rand_instance=self
+                                mpc_instance=self.mpc_instance
                             )
-            
-
             self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 

@@ -9,7 +9,7 @@ from adkg.utils.bitmap import Bitmap
 from adkg.acss import ACSS
 
 from adkg.broadcast.tylerba import tylerba
-from adkg.broadcast.optqrbc import optqrbc
+from adkg.broadcast.optqrbc import optqrbc, optqrbc_dynamic
 
 from adkg.preprocessing import PreProcessedElements
 
@@ -193,17 +193,18 @@ class Robust_Rec:
 
             # rbc_outputs[j] = 
             asyncio.create_task(
-                optqrbc(
+                optqrbc_dynamic(
                     rbctag,
                     self.my_id,
                     self.n,
                     self.t,
-                    j,
+                    self.member_list[j],
                     predicate,
                     rbc_input,
                     rbc_outputs[j].put_nowait,
                     rbcsend,
                     rbcrecv,
+                    self.member_list
                 )
             )
 
@@ -212,8 +213,8 @@ class Robust_Rec:
             abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
 
             def bcast(o):
-                for i in range(self.n):
-                    abasend(i, o)
+                for i in range(len(self.member_list)):
+                    abasend(self.member_list[i], o)
                 
             aba_task = asyncio.create_task(
                 tylerba(
@@ -283,7 +284,8 @@ class Robust_Rec:
         return (self.mks, res)
         
     
-    async def batch_run_robust_rec(self, rec_id, shares):
+    async def batch_run_robust_rec(self, rec_id, shares, member_list):
+        self.member_list = member_list
 
         # self.rec_id = rec_id
         self.global_num += 1
@@ -321,17 +323,18 @@ class Robust_Rec:
             # rbc_outputs[j] = 
             
             rbc_task = asyncio.create_task(
-                optqrbc(
+                optqrbc_dynamic(
                     rbctag,
                     self.my_id,
                     self.n,
                     self.t,
-                    j,
+                    self.member_list[j],
                     predicate,
                     rbc_input,
                     rbc_outputs[j].put_nowait,
                     rbcsend,
                     rbcrecv,
+                    self.member_list
                 )
             )
 
