@@ -16,7 +16,7 @@ from adkg.preprocessing import PreProcessedElements
 
 from adkg.mpc import TaskProgramRunner
 from adkg.robust_rec import robust_reconstruct_admpc, Robust_Rec
-from adkg.trans import Trans
+from adkg.trans import Trans, Trans_Pre, Trans_Foll
 from adkg.rand import Rand, Rand_Pre, Rand_Foll
 from adkg.aprep import APREP, APREP_Pre, APREP_Foll
 import math
@@ -351,10 +351,19 @@ class ADMPC_Dynamic(ADMPC):
             rand_values = []
             for i in range(tape_num): 
                 inputs.append(self.ZR(2*(self.my_id+1)+3))
-                inputs.append(self.ZR(3*(self.my_id+1)+2))
+                # inputs.append(self.ZR(3*(self.my_id+1)+2))
                 gate_tape.append(1)
                 mult_triples.append([self.ZR((self.my_id+1)+5), self.ZR(3*(self.my_id+1)+2), self.ZR(2*(self.my_id+1)+10)])
                 rand_values.append(self.ZR(2*(self.my_id+1)+5))
+
+            # 这里先写成 clients 调用 trans 协议给 servers 提供输入了
+            transtag = ADMPCMsgType.TRANS
+            transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+            trans_pre = Trans_Pre(self.public_keys, self.private_key, 
+                              self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                              transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+            trans_pre_task = asyncio.create_task(trans_pre.run_trans(inputs, rand_values))
 
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
@@ -367,25 +376,39 @@ class ADMPC_Dynamic(ADMPC):
             # randtag = ADMPCMsgType.GENRAND
             # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
 
-            # rand_Pre = Rand_Pre(self.public_keys, self.private_key, 
+            # rand_pre = Rand_Pre(self.public_keys, self.private_key, 
             #                     self.g, self.h, self.n, self.t, self.deg, self.my_id, 
             #                     randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            # rand_Pre_task = asyncio.create_task(rand_Pre.run_rand(w, rounds))
+            # rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
 
             # clients step 3 调用 Aprep 协议传递三元组给下一层
-            cm = 2
+            # cm = 2
 
-            apreptag = ADMPCMsgType.APREP
-            aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+            # apreptag = ADMPCMsgType.APREP
+            # aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
-            aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
-                          self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                          aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+            # aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
+            #               self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+            #               aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            # aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
 
 
         else:
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
+
+            # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
+            transtag = ADMPCMsgType.TRANS
+            transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+            trans_foll = Trans_Foll(self.public_keys, self.private_key, 
+                              self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                              transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+            # 这里也是假设当前 servers 知道上一层电路门输出的数量
+            len_values = 4
+            new_shares = await trans_foll.run_trans(len_values)
+            print(f"new shares: {new_shares}")
+
+
             # 这是 step 2 接收上一层的随机数
             # randtag = ADMPCMsgType.GENRAND
             # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
@@ -398,17 +421,17 @@ class ADMPC_Dynamic(ADMPC):
             
             # print(f"rand_shares: {rand_shares}")
 
-            # 这是 step 3 接收上一层的三元组
-            apreptag = ADMPCMsgType.APREP
-            aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+            # # 这是 step 3 接收上一层的三元组
+            # apreptag = ADMPCMsgType.APREP
+            # aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
-            aprep_foll = APREP_Foll(self.public_keys, self.private_key, 
-                          self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                          aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            # aprep_foll = APREP_Foll(self.public_keys, self.private_key, 
+            #               self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+            #               aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
 
-            # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
-            cm = 2
-            new_mult_triples = await aprep_foll.run_aprep(cm)
+            # # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
+            # cm = 2
+            # new_mult_triples = await aprep_foll.run_aprep(cm)
 
 
         # 这里是 execution stage 的 step 1，执行当前层的计算
