@@ -94,7 +94,6 @@ class ADMPC:
         # print(f"my id: {self.my_id} rec_values: {rec_values}")
 
         # return rec_values
-        
         rec_values = await self.rec.batch_run_robust_rec(index, rec_shares)
 
         # # rec_signal.set()
@@ -102,6 +101,7 @@ class ADMPC:
     
     async def mult(self, mult_values, mult_triples): 
         gamma_list, epsilon_list = [None] * len(mult_values), [None] * len(mult_values)
+        
         batch_rec_list = []
         for i in range(len(mult_values)): 
             gamma_list[i] = mult_values[i][0] - mult_triples[i][0]
@@ -285,6 +285,7 @@ class ADMPC_Multi_Layer_Control():
         self.t = t
         self.deg = deg
         self.layer_num = layer_num
+        self.control_signal = asyncio.Event()
 
     async def add(self):
         """生成 layer_num * n 个mpc instances(存在self.admpc_lists中,具体的run_admpc存在admpc_tasks中)"""
@@ -333,136 +334,373 @@ class ADMPC_Dynamic(ADMPC):
         # 给每个MPC实例增加了self.admpc_control_instance的属性，使得能够通过这个属性访问控制所有MPC实例的类，从而访问对应的公钥组等
         self.admpc_control_instance = admpc_control_instance if admpc_control_instance is not None else ADMPC_Multi_Layer_Control()
         self.layer_ID = layerID
+        self.sc = ceil((deg+1)/(t+1)) + 1
         # 往自己signal_list里面放一个signal
         self.Signal = asyncio.Event()
         super().__init__(public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices)
 
+    async def robust_rec_step(self, rec_shares, index):         
+
+        # self.rectasks = [None] * len(rec_shares)
+        # for i in range(len(rec_shares)): 
+        #     self.rectasks[i] = asyncio.create_task(self.rec.run_robust_rec(i, rec_shares[i]))
+        # rec_values = await asyncio.gather(*self.rectasks)
+        # print(f"my id: {self.my_id} rec_values: {rec_values}")
+
+        # return rec_values
+        member_list = []
+        for i in range(self.n): 
+            member_list.append(self.n * (self.layer_ID) + i)
+        rec_values = await self.rec.batch_run_robust_rec(index, rec_shares, member_list)
+
+        # # rec_signal.set()
+        return rec_values
+    
+    async def mult(self, mult_values, mult_triples): 
+        gamma_list, epsilon_list = [None] * len(mult_values), [None] * len(mult_values)
+        
+        batch_rec_list = []
+        for i in range(len(mult_values)): 
+            gamma_list[i] = mult_values[i][0] - mult_triples[i][0]
+            epsilon_list[i] = mult_values[i][1] - mult_triples[i][1]
+            batch_rec_list.append(gamma_list[i])
+            batch_rec_list.append(epsilon_list[i])
+        # gamma = mult_values[0] - mult_triples[0]
+        # epsilon = mult_values[1] - mult_triples[1]
+
+        # batch_rec_list = []
+        # batch_rec_list.append(gamma_list)
+        # batch_rec_list.append(epsilon_list)
+
+        # robust_rec_signal = asyncio.Event()
+        sttime = time.time()
+        # rec_gamma = await self.robust_rec_step(gamma, 0)
+        
+        # await robust_rec_signal.wait()
+        # robust_rec_signal.clear()
+        # rec_epsilon = await self.robust_rec_step(epsilon, 1)
+        # await robust_rec_signal.wait()
+        # robust_rec_signal.clear()
+
+        rec_values = await self.robust_rec_step(batch_rec_list, 0)
+        num = 0
+        rec_gamma_list, rec_epsilon_list = [], []
+        for i in range(len(mult_values)):
+            rec_gamma_list.append(rec_values[num])
+            rec_epsilon_list.append(rec_values[num+1])
+            num += 2
+        mult_outputs = [None] * len(mult_values)
+        for i in range(len(mult_values)):
+            mult_outputs[i] = mult_triples[i][2] + rec_gamma_list[i] * mult_triples[i][1] + rec_epsilon_list[i] * mult_triples[i][0] + rec_gamma_list[i] * rec_epsilon_list[i]
+
+        # rec_gamma, rec_epsilon = await asyncio.gather(self.robust_rec_step(gamma, 0), self.robust_rec_step(epsilon, 1))  
+        print(f"sttime: {time.time()-sttime}")
+
+        # mult_output = mult_triples[2] + rec_gamma * mult_triples[1] + rec_epsilon * mult_triples[0] + rec_gamma * rec_epsilon
+        return mult_outputs
+
+    
+    async def run_computation(self, inputs, gate_tape, mult_triples):
+        self.gates_num = int(len(inputs)/2)
+        # 这里根据当前层门的数量对输入进行划分
+        gate_input_values = [[self.ZR(0) for _ in range(2)] for _ in range(self.gates_num)]
+        for i in range(self.gates_num): 
+            for j in range(2): 
+                gate_input_values[i][j] = inputs[i*2+j]
+        # 输出存在这里
+        gate_output_values = [None] * self.gates_num
+        # 这两个用来记录当前层的乘法门位置和数量，用来做当前层乘法门的批处理
+        batch_mult_gates, mult_pos = [], []
+        triple_num = 0
+        for i in range(self.gates_num): 
+            # 这是加法
+            if gate_tape[i] == 0: 
+                gate_output_values[i] = gate_input_values[i][0] + gate_input_values[i][1]
+            # 这是乘法
+            else: 
+                batch_mult_gates.append(gate_input_values[i])
+                mult_pos.append(i)
+                # gate_output_values[i] = await self.mult(gate_input_values[i], mult_triples[triple_num])
+                # triple_num += 1
+        batch_mult_outputs = await self.mult(batch_mult_gates, mult_triples)
+        for i in range(len(mult_pos)): 
+            gate_output_values[mult_pos[i]] = batch_mult_outputs[i]
+
+        # self.output_queue.put_nowait(gate_output_values)
+        return gate_output_values
+    
+    
     async def run_admpc(self, start_time):
         acss_start_time = time.time()
 
         # 我们假设 layer_ID = 0 时是 clients 提供输入给 servers
         if self.layer_ID == 0:
 
-            # clients step 1 调用 acss 将输入传递给下一层
-            tape_num = 4
-            inputs = []
-            gate_tape = []
-            mult_triples = []
-            rand_values = []
-            for i in range(tape_num): 
-                inputs.append(self.ZR(2*(self.my_id+1)+3))
-                # inputs.append(self.ZR(3*(self.my_id+1)+2))
-                gate_tape.append(1)
-                mult_triples.append([self.ZR((self.my_id+1)+5), self.ZR(3*(self.my_id+1)+2), self.ZR(2*(self.my_id+1)+10)])
-                rand_values.append(self.ZR(2*(self.my_id+1)+5))
+            clients_inputs = [self.ZR.rand()]
 
-            # 这里先写成 clients 调用 trans 协议给 servers 提供输入了
-            transtag = ADMPCMsgType.TRANS
-            transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+            # 此处传递的公钥应该是下一层的公钥
+            pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
 
-            trans_pre = Trans_Pre(self.public_keys, self.private_key, 
-                              self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                              transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
-            trans_pre_task = asyncio.create_task(trans_pre.run_trans(inputs, rand_values))
+            # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+            acsstag = ADMPCMsgType.ACSS + str(self.layer_ID+1) + str(self.my_id)
+            acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+            self.acss = ACSS_Pre(pks_next_layer, 
+                                self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                mpc_instance=self
+                            )
+            self.acss_tasks = [None] * self.n
+            # 在上一层中只需要创建一次avss即可        
+            self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=clients_inputs))
 
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
-            # w = 3
-            # if w > self.n - self.t: 
-            #     rounds = math.ceil(w / (self.n - self.t))
-            # else: 
-            #     rounds = 1
+            # 这里 w 和 cm 根据 n 和 t 的不同需要手动改
+            w = 8
+            if w > self.n - self.t: 
+                rounds = math.ceil(w / (self.n - self.t))
+            else: 
+                rounds = 1
 
-            # randtag = ADMPCMsgType.GENRAND
-            # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+            randtag = ADMPCMsgType.GENRAND + str(self.layer_ID+1)
+            randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
 
-            # rand_pre = Rand_Pre(self.public_keys, self.private_key, 
-            #                     self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-            #                     randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            # rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+            rand_pre = Rand_Pre(self.public_keys, self.private_key, 
+                                self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
 
             # clients step 3 调用 Aprep 协议传递三元组给下一层
-            # cm = 2
+            cm = 8
 
-            # apreptag = ADMPCMsgType.APREP
-            # aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+            apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
+            aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
-            # aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
-            #               self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-            #               aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            # aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+            aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
+                          self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                          aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
 
-
-        else:
+        elif self.layer_ID == 1: 
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
-
+            # await self.admpc_control_instance.control_signal.wait()
+            # self.admpc_control_instance.control_signal.clear()
             # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
-            transtag = ADMPCMsgType.TRANS
-            transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+            self.acss_tasks = [None] * self.n
+            for dealer_id in range(self.n): 
+                # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+                acsstag = ADMPCMsgType.ACSS + str(self.layer_ID) + str(dealer_id)
+                acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
 
-            trans_foll = Trans_Foll(self.public_keys, self.private_key, 
-                              self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                              transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
-            # 这里也是假设当前 servers 知道上一层电路门输出的数量
-            len_values = 4
-            new_shares = await trans_foll.run_trans(len_values)
-            print(f"new shares: {new_shares}")
+                # 此时传递的是本层的公私钥
+                self.acss = ACSS_Foll(self.public_keys, self.private_key, 
+                                    self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                    acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                    mpc_instance=self
+                                )
+                self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, 1))
+
+
+                # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
+
+            results = await asyncio.gather(*self.acss_tasks)
+            dealer, _, shares, commitments = zip(*results)
+                
+            new_shares = []
+            for i in range(len(dealer)): 
+                for j in range(len(shares[i]['msg'])): 
+                    new_shares.append(shares[i]['msg'][j])
 
 
             # 这是 step 2 接收上一层的随机数
-            # randtag = ADMPCMsgType.GENRAND
-            # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
-            # rand_foll = Rand_Foll(self.public_keys, self.private_key, 
-            #                       self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-            #                       randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            # # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
-            # w, rounds = 3, 1           
-            # rand_shares = await rand_foll.run_rand(w, rounds)
+            randtag = ADMPCMsgType.GENRAND + str(self.layer_ID)
+            randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+            rand_foll = Rand_Foll(self.public_keys, self.private_key, 
+                                  self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                  randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
+            w = int(len(new_shares)/2)
+            if w > self.n - self.t: 
+                rounds = math.ceil(w / (self.n - self.t))
+            else: 
+                rounds = 1
+            # w, rounds = 2, 1           
+            rand_shares = await rand_foll.run_rand(w, rounds)
             
             # print(f"rand_shares: {rand_shares}")
 
             # # 这是 step 3 接收上一层的三元组
-            # apreptag = ADMPCMsgType.APREP
-            # aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+            apreptag = ADMPCMsgType.APREP + str(self.layer_ID)
+            aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
-            # aprep_foll = APREP_Foll(self.public_keys, self.private_key, 
-            #               self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-            #               aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            aprep_foll = APREP_Foll(self.public_keys, self.private_key, 
+                          self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                          aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
 
-            # # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
+            # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
+            cm = int(len(new_shares)/2)
             # cm = 2
-            # new_mult_triples = await aprep_foll.run_aprep(cm)
+            new_mult_triples = await aprep_foll.run_aprep(cm)
+            # print(f"new triples: {new_mult_triples}")
 
 
-        # 这里是 execution stage 的 step 1，执行当前层的计算
-            # gate_outputs = await self.run_computation(inputs, gate_tape, mult_triples)
+            # 这里是 execution stage 的 step 1，执行当前层的计算
+            gate_tape = []
+            for i in range(int(len(new_shares)/2)): 
+                gate_tape.append(1)
+            gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
             # print(f"my id: {self.my_id} outputs: {gate_outputs}")
+
+            if self.layer_ID + 1 < len(self.admpc_control_instance.pks_all):
+            # if self.admpc_control_instance.pks_all[self.layer_ID + 1] is not None: 
+                # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
+                # w 是需要生成的随机数的数量
+                w = int(len(gate_outputs)/2)
+                # w = 1
+                if w > self.n - self.t: 
+                    rounds = math.ceil(w / (self.n - self.t))
+                else: 
+                    rounds = 1
+
+                randtag = ADMPCMsgType.GENRAND + str(self.layer_ID+1)
+                randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+
+                rand_pre = Rand_Pre(self.public_keys, self.private_key, 
+                                    self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                    randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+                rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+
+                # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 
+                cm = int(len(gate_outputs)/2)
+                # cm = 1
+
+                apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
+                aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+
+                aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
+                            self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                            aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+                aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+
+                # 这里是 execution stage 的 step 4，调用 Trans 协议将当前层的电路输出传输到下一层
+                transtag = ADMPCMsgType.TRANS + str(self.layer_ID+1)
+                transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+                trans_pre = Trans_Pre(self.public_keys, self.private_key, 
+                                self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+                trans_pre_task = asyncio.create_task(trans_pre.run_trans(gate_outputs, rand_shares))
+                
+                self.admpc_control_instance.control_signal.set()
+                
+                print("end")
+            else: 
+                print("over")
+        else:
+        # elif self.layer_ID == 2: 
+            # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
+            await self.admpc_control_instance.control_signal.wait()
+            self.admpc_control_instance.control_signal.clear()
+            # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
+            print(f"ok")
+            transtag = ADMPCMsgType.TRANS + str(self.layer_ID)
+            transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+            trans_foll = Trans_Foll(self.public_keys, self.private_key, 
+                            self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                            transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+            # 这里也是假设当前 servers 知道上一层电路门输出的数量
+            # 这里也需要手动改
+            len_values = 8
+            new_shares = await trans_foll.run_trans(len_values)
+            # print(f"new shares: {new_shares}")
+                
+
+
+            # 这是 step 2 接收上一层的随机数
+            randtag = ADMPCMsgType.GENRAND + str(self.layer_ID)
+            randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+            rand_foll = Rand_Foll(self.public_keys, self.private_key, 
+                                  self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                  randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+            # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
+            w = int(len(new_shares)/2)
+            # w = 1
+            if w > self.n - self.t: 
+                rounds = math.ceil(w / (self.n - self.t))
+            else: 
+                rounds = 1
+            # w, rounds = 2, 1           
+            rand_shares = await rand_foll.run_rand(w, rounds)
+            
+            # print(f"rand_shares: {rand_shares}")
+
+            # # 这是 step 3 接收上一层的三元组
+            apreptag = ADMPCMsgType.APREP + str(self.layer_ID)
+            aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+
+            aprep_foll = APREP_Foll(self.public_keys, self.private_key, 
+                          self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                          aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+
+            # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
+            cm = int(len(new_shares)/2)
+            # cm = 1
+            new_mult_triples = await aprep_foll.run_aprep(cm)
+            # print(f"new triples: {new_mult_triples}")
+
+
+            # 这里是 execution stage 的 step 1，执行当前层的计算
+            gate_tape = []
+            for i in range(int(len(new_shares)/2)): 
+                gate_tape.append(1)
+            gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
+            print(f"my id: {self.my_id} outputs: {gate_outputs}")
+
+            if self.layer_ID + 1 < len(self.admpc_control_instance.pks_all):
+            # if self.admpc_control_instance.pks_all[self.layer_ID + 1] is not None: 
+                # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
+                # w 是需要生成的随机数的数量
+                w = int(len(gate_outputs)/2)
+                # w = 1
+                if w > self.n - self.t: 
+                    rounds = math.ceil(w / (self.n - self.t))
+                else: 
+                    rounds = 1
+
+                randtag = ADMPCMsgType.GENRAND + str(self.layer_ID+1)
+                randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
+
+                rand_pre = Rand_Pre(self.public_keys, self.private_key, 
+                                    self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                    randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+                rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+
+                # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 
+                cm = int(len(gate_outputs)/2)
+                # cm = 1
+
+                apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
+                aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
+
+                aprep_pre = APREP_Pre(self.public_keys, self.private_key, 
+                            self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                            aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+                aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+
+                # 这里是 execution stage 的 step 4，调用 Trans 协议将当前层的电路输出传输到下一层
+                transtag = ADMPCMsgType.TRANS + str(self.layer_ID+1)
+                transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+                trans_pre = Trans_Pre(self.public_keys, self.private_key, 
+                                self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+                trans_pre_task = asyncio.create_task(trans_pre.run_trans(gate_outputs, rand_shares))
+                self.admpc_control_instance.control_signal.set()
+                
+                print("end")
+            else: 
+                print("over")
         
-        # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
-            # w 是需要生成的随机数的数量
-            # w = 3
-
-            # if w > self.n - self.t: 
-            #     rounds = math.ceil(w / (self.n - self.t))
-            # else: 
-            #     rounds = 1
-
-            # randtag = ADMPCMsgType.GENRAND
-            # randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
         
-        # # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组
-        # cm = 2
-
-        # apreptag = ADKGMsgType.APREP
-        # aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
-        # aprep = APREP(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, aprepsend, apreprecv, self.pc, self.curve_params, self.matrix)
-        # new_mult_triples = await aprep.run_aprep(cm)
-        # print(f"new_mult_triples: {new_mult_triples}")
-
-
-        # # 这里是 execution stage 的 step 4，调用 Trans 协议将当前层的电路输出传输到下一层
-        # transtag = ADKGMsgType.TRANS
-        # transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
-        # trans = Trans(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, transsend, transrecv, self.pc, self.curve_params)
-        # new_shares = await trans.run_trans(gate_outputs, rand_values)
-        # print(new_shares)

@@ -1106,7 +1106,7 @@ class ACSS_Pre(ACSS):
         admpc_control_instance = self.mpc_instance.admpc_control_instance
         admpc_lists_next_layer = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID + 1]
 
-        member_list = [self.my_id]
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
             member_list.append(n * (self.mpc_instance.layer_ID + 1) + i)
         asyncio.create_task(
@@ -1161,7 +1161,7 @@ class ACSS_Pre(ACSS):
         admpc_control_instance = self.mpc_instance.admpc_control_instance
         admpc_lists_next_layer = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID + 1]
 
-        member_list = [self.my_id]
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
             member_list.append(n * (self.mpc_instance.layer_ID + 1) + i)
         asyncio.create_task(
@@ -1217,7 +1217,7 @@ class ACSS_Pre(ACSS):
         admpc_control_instance = self.mpc_instance.admpc_control_instance
         admpc_lists_next_layer = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID + 1]
 
-        member_list = [self.my_id]
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
             member_list.append(n * (self.mpc_instance.layer_ID + 1) + i)
         asyncio.create_task(
@@ -1349,7 +1349,7 @@ class ACSS_Foll(ACSS):
         # await signal.wait()
         # 重点！！这里的 my_id 要修改一下，不然会跟 上一层的 dealer_id 重合，导致 rbc过程失效
 
-        member_list = [dealer_id]
+        member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
         for i in range(self.n): 
             member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
         if self.my_id < dealer_id: 
@@ -1425,7 +1425,7 @@ class ACSS_Foll(ACSS):
         # await signal.wait()
         # 重点！！这里的 my_id 要修改一下，不然会跟 上一层的 dealer_id 重合，导致 rbc过程失效
 
-        member_list = [dealer_id]
+        member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
         for i in range(self.n): 
             member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
         if self.my_id < dealer_id: 
@@ -1505,7 +1505,7 @@ class ACSS_Foll(ACSS):
         # await signal.wait()
         # 重点！！这里的 my_id 要修改一下，不然会跟 上一层的 dealer_id 重合，导致 rbc过程失效
 
-        member_list = [dealer_id]
+        member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
         for i in range(self.n): 
             member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
         if self.my_id < dealer_id: 

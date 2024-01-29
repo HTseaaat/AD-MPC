@@ -279,7 +279,7 @@ async def optqrbc_dynamic(sid, pid, n, f, leader, predicate, input, output, send
         for i in range(len(rbc_list)):
             send(rbc_list[i], o)
 
-    if pid == int(leader%n):
+    if pid == int(leader%(n)):
         m = input
 
         assert isinstance(m, (str, bytes))
@@ -314,10 +314,17 @@ async def optqrbc_dynamic(sid, pid, n, f, leader, predicate, input, output, send
             sender, msg = await receive()
             if msg[0] == RBCMsgType.PROPOSE and leader_hash is None:
                 (_, leader_msg) = msg
-                if sender != leader:
-                    logger.info(f"[{pid}] PROPOSE message from other than leader: {sender}")
-                    continue
-            
+                # 注意！！这里随着 layerID 升高，sender 的值也会变大，所以需要更改一下判定条件
+                # if sender != leader:
+                if n == 5:
+                    if int(sender%(n-1)) != leader:
+                        logger.info(f"[{pid}] PROPOSE message from other than leader: {sender}")
+                        continue
+                if n == 4: 
+                    if int(sender%(n)) != leader:
+                        logger.info(f"[{pid}] PROPOSE message from other than leader: {sender}")
+                        continue
+
                 # print(f"leader_msg: {leader_msg}")
                 valid = await predicate(leader_msg)
                 # print(f"valid: {valid}")

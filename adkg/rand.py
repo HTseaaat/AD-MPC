@@ -458,7 +458,7 @@ class Rand_Foll(Rand):
                     self.my_id,
                     self.n,
                     self.t,
-                    self.member_list[j],
+                    j,
                     predicate,
                     rbc_input,
                     rbc_outputs[j].put_nowait,

@@ -557,7 +557,7 @@ class Trans_Pre(Trans):
     async def rbc_masked_step_pre(self, rbc_masked_input): 
         rbc_outputs = asyncio.Queue()
 
-        member_list = [self.my_id]
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
             member_list.append(self.n * (self.mpc_instance.layer_ID + 1) + i)
         
@@ -817,7 +817,7 @@ class Trans_Foll(Trans):
                     self.my_id,
                     self.n,
                     self.t,
-                    self.member_list[j],
+                    j,
                     predicate,
                     rbc_input,
                     rbc_outputs[j].put_nowait,
@@ -942,6 +942,8 @@ class Trans_Foll(Trans):
         
 
         for dealer_id in range(self.n): 
+            # 注意！dealer_id 这里要改一下
+            # dealer_id = (self.mpc_instance.layer_ID - 1) * self.n + i
 
             async def predicate(_m):
                 return True
@@ -950,9 +952,9 @@ class Trans_Foll(Trans):
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
             rbc_input = None
 
-            member_list = [dealer_id]
-            for i in range(self.n): 
-                member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
+            member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
+            for j in range(self.n): 
+                member_list.append(self.n * (self.mpc_instance.layer_ID) + j)
 
             if self.my_id < dealer_id: 
                 rbc_tasks[dealer_id] = asyncio.create_task(

@@ -808,7 +808,7 @@ class APREP_Foll(APREP):
                     self.my_id,
                     self.n,
                     self.t,
-                    self.member_list[j],
+                    j,
                     predicate,
                     rbc_input,
                     rbc_outputs[j].put_nowait,
@@ -1007,10 +1007,10 @@ class APREP_Foll(APREP):
                               self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                               randsend, randrecv, self.pc, curve_params, self.matrix, 
                               mpc_instance=self.mpc_instance)
-        print(f"{self.mpc_instance.layer_ID}")
+        # print(f"{self.mpc_instance.layer_ID}")
         self.rand_task = asyncio.create_task(self.rand_foll.run_rand(rand_num, rounds))
         rand_outputs = await self.rand_task
-        print(f"len(rand_outputs): {len(rand_outputs)}, rand_outputs: {rand_outputs}")
+        # print(f"len(rand_outputs): {len(rand_outputs)}, rand_outputs: {rand_outputs}")
         return rand_outputs
 
         while True: 
