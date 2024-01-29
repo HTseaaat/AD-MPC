@@ -40,7 +40,7 @@ config = {
 
 async def tutorial_1():
     # Create a test network of 4 nodes (no sockets, just asyncio tasks)
-    n, t = 16, 5
+    n, t = 4, 1
     layer_num = 3
     deg = t
     start_time = time.time()

@@ -383,7 +383,6 @@ class Rand_Pre(Rand):
         # 此处传递的公钥应该是下一层的公钥
         admpc_control_instance = self.mpc_instance.admpc_control_instance
         layerID = self.mpc_instance.layer_ID
-        admpc_lists_next_layer = admpc_control_instance.admpc_lists[layerID + 1]
         pks_next_layer = admpc_control_instance.pks_all[layerID + 1]       # 下一层的公钥组
 
         # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突

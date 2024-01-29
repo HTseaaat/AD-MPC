@@ -28,7 +28,7 @@ DOT_SEPARATED_PATH=$(IFS=. ; echo "${DIRS[*]}")
 MODULE_PATH=${DOT_SEPARATED_PATH%???}
 
 NUM_NODES=$2
-CONFIG_PATH="conf/admpc_${NUM_NODES}/local"
+CONFIG_PATH="conf/admpc_dynamic_16_${NUM_NODES}/local"
 # CONFIG_PATH="conf/adkg_${NUM_NODES}/local"
 
 CMD="python3 -m ${MODULE_PATH}"
@@ -40,7 +40,8 @@ start_time=$((start_time+2))
 
 ## The following was used for launching a larger number
 ## of processes locally, with only a portion of them shown in tmux
-for ID in $(seq 4 $NUM_NODES)
+for ID in $(seq 0 43)
+# for ID in $(seq 5 $NUM_NODES)
 do
    echo
    ${CMD} -d -f ${CONFIG_PATH}.${ID}.json -time $start_time > logs/logs-${ID}.log 2>&1 &
@@ -51,8 +52,19 @@ if [ -z "$3" ]
   then
     set -x
     rm -rf sharedata/
-    tmux new-session     "${CMD} -d -f ${CONFIG_PATH}.0.json -time $start_time; sh" \; \
-        splitw -h -p 50 "${CMD} -d -f ${CONFIG_PATH}.1.json -time $start_time; sh" \; \
-        splitw -v -p 66 "${CMD} -d -f ${CONFIG_PATH}.2.json -time $start_time; sh" \; \
-        splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.3.json -time $start_time; sh" \;
+    tmux new-session     "${CMD} -d -f ${CONFIG_PATH}.44.json -time $start_time; sh" \; \
+        splitw -h -p 50 "${CMD} -d -f ${CONFIG_PATH}.45.json -time $start_time; sh" \; \
+        splitw -v -p 66 "${CMD} -d -f ${CONFIG_PATH}.46.json -time $start_time; sh" \; \
+        splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.47.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.1.json -time $start_time; sh" \; 
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.5.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.6.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.7.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.8.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.9.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.10.json -time $start_time; sh" \; \
+        # splitw -v -p 50 "${CMD} -d -f ${CONFIG_PATH}.11.json -time $start_time; sh" \; 
+
+        
+        
 fi

@@ -279,13 +279,17 @@ def gen_vector(t, n, ZR):
 
 # 管理所有的MPC实例
 class ADMPC_Multi_Layer_Control():
-    def __init__(self, n=None, t= None, deg=None, layer_num=None):
+    def __init__(self, n=None, t= None, deg=None, layer_num=None, pks=None):
         # 初始化
         self.n = n
         self.t = t
         self.deg = deg
         self.layer_num = layer_num
         self.control_signal = asyncio.Event()
+        self.pks_all = [[None] * self.n for _ in range(self.layer_num)]
+        if pks is not None: 
+            for layerID in range(self.layer_num): 
+                self.pks_all[layerID] = pks[self.n*layerID:self.n*layerID+self.n]
 
     async def add(self):
         """生成 layer_num * n 个mpc instances(存在self.admpc_lists中,具体的run_admpc存在admpc_tasks中)"""
@@ -326,14 +330,17 @@ class ADMPC_Multi_Layer_Control():
             await asyncio.gather(*(self.admpc_tasks[layerID]))
         # await asyncio.gather(*(self.admpc_tasks[1]))
 
+    
+
 # 增加一个ADMPC的子类
 # 我们需要在这个子类中能够引用控制所有MPC的ADMPC_Multi_Layer_Control 实例
 # 而且每个Node要知道自己在第几层
 class ADMPC_Dynamic(ADMPC):
     def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices, layerID = None, admpc_control_instance=None):
         # 给每个MPC实例增加了self.admpc_control_instance的属性，使得能够通过这个属性访问控制所有MPC实例的类，从而访问对应的公钥组等
-        self.admpc_control_instance = admpc_control_instance if admpc_control_instance is not None else ADMPC_Multi_Layer_Control()
+        self.admpc_control_instance = admpc_control_instance if admpc_control_instance is not None else ADMPC_Multi_Layer_Control(n, t, deg, int(len(public_keys)/n), public_keys)
         self.layer_ID = layerID
+        # self.public_keys = public_keys[n*layerID:n*layerID+n]
         self.sc = ceil((deg+1)/(t+1)) + 1
         # 往自己signal_list里面放一个signal
         self.Signal = asyncio.Event()
@@ -432,6 +439,7 @@ class ADMPC_Dynamic(ADMPC):
     
     async def run_admpc(self, start_time):
         acss_start_time = time.time()
+        self.public_keys = self.public_keys[self.n*self.layer_ID:self.n*self.layer_ID+self.n]
 
         # 我们假设 layer_ID = 0 时是 clients 提供输入给 servers
         if self.layer_ID == 0:
@@ -453,11 +461,12 @@ class ADMPC_Dynamic(ADMPC):
             self.acss_tasks = [None] * self.n
             # 在上一层中只需要创建一次avss即可        
             self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=clients_inputs))
+            await self.acss_tasks[self.my_id]
 
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
             # 这里 w 和 cm 根据 n 和 t 的不同需要手动改
-            w = 8
+            w = int(self.n / 2)
             if w > self.n - self.t: 
                 rounds = math.ceil(w / (self.n - self.t))
             else: 
@@ -470,9 +479,10 @@ class ADMPC_Dynamic(ADMPC):
                                 self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                 randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+            await rand_pre_task
 
             # clients step 3 调用 Aprep 协议传递三元组给下一层
-            cm = 8
+            cm = int(self.n / 2)
 
             apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
@@ -481,6 +491,9 @@ class ADMPC_Dynamic(ADMPC):
                           self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                           aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+            await aprep_pre_task
+
+            await asyncio.sleep(1)
 
         elif self.layer_ID == 1: 
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
@@ -503,16 +516,16 @@ class ADMPC_Dynamic(ADMPC):
 
 
                 # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
-
             results = await asyncio.gather(*self.acss_tasks)
             dealer, _, shares, commitments = zip(*results)
                 
+            
             new_shares = []
             for i in range(len(dealer)): 
                 for j in range(len(shares[i]['msg'])): 
                     new_shares.append(shares[i]['msg'][j])
 
-
+            
             # 这是 step 2 接收上一层的随机数
             randtag = ADMPCMsgType.GENRAND + str(self.layer_ID)
             randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
@@ -595,13 +608,14 @@ class ADMPC_Dynamic(ADMPC):
                 self.admpc_control_instance.control_signal.set()
                 
                 print("end")
+                await asyncio.sleep(1)
             else: 
                 print("over")
         else:
         # elif self.layer_ID == 2: 
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
-            await self.admpc_control_instance.control_signal.wait()
-            self.admpc_control_instance.control_signal.clear()
+            # await self.admpc_control_instance.control_signal.wait()
+            # self.admpc_control_instance.control_signal.clear()
             # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
             print(f"ok")
             transtag = ADMPCMsgType.TRANS + str(self.layer_ID)
@@ -612,9 +626,9 @@ class ADMPC_Dynamic(ADMPC):
                             transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
             # 这里也是假设当前 servers 知道上一层电路门输出的数量
             # 这里也需要手动改
-            len_values = 8
+            len_values = int(self.n / 2)
             new_shares = await trans_foll.run_trans(len_values)
-            # print(f"new shares: {new_shares}")
+            print(f"new shares: {new_shares}")
                 
 
 

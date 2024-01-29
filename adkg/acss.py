@@ -268,22 +268,29 @@ class ACSS:
         if self.private_key == None:
             return True
 
+        
         shared_key = ephkey**self.private_key
-
+        
         try:
             sharesb = SymmetricCrypto.decrypt(shared_key.__getstate__(), dispersal_msg)
         except ValueError as e:  # TODO: more specific exception
             logger.warn(f"Implicate due to failure in decrypting: {e}")
             self.acss_status[dealer_id] = False
             return False
-
+        
         shares = self.sr.deserialize_fs(sharesb)
+
+        
+        
         phis, phis_hat = shares[:self.rand_num], shares[self.rand_num:]
+        
         # check the feldman commitment of the first secret
         for i in range(self.rand_num):
+            
             if not self.poly_commit.verify_eval(commits[i], self.my_id + 1, phis[i], phis_hat[i]): 
                 self.acss_status[dealer_id] = False
                 return False
+        
         
         self.acss_status[dealer_id] = True
         self.data[dealer_id] = [commits, phis, phis_hat, ephkey, shared_key]
@@ -645,6 +652,7 @@ class ACSS:
             phis_hat_i = [phi_hat[k](i + 1) for k in range(self.rand_num)]
             ciphertext = SymmetricCrypto.encrypt(shared_key.__getstate__(), self.sr.serialize_fs(phis_i+ phis_hat_i))
             dispersal_msg_list.extend(ciphertext)
+
 
         g_commits = []
         # print(f"g_commits: {g_commits}")
@@ -1104,7 +1112,6 @@ class ACSS_Pre(ACSS):
         # 把信号放入mpcnode 中
         my_mpc_instance = self.mpc_instance
         admpc_control_instance = self.mpc_instance.admpc_control_instance
-        admpc_lists_next_layer = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID + 1]
 
         member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
@@ -1159,7 +1166,6 @@ class ACSS_Pre(ACSS):
         # 把信号放入mpcnode 中
         my_mpc_instance = self.mpc_instance
         admpc_control_instance = self.mpc_instance.admpc_control_instance
-        admpc_lists_next_layer = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID + 1]
 
         member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
@@ -1215,7 +1221,6 @@ class ACSS_Pre(ACSS):
         # 把信号放入mpcnode 中
         my_mpc_instance = self.mpc_instance
         admpc_control_instance = self.mpc_instance.admpc_control_instance
-        admpc_lists_next_layer = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID + 1]
 
         member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
         for i in range(self.n): 
@@ -1486,6 +1491,7 @@ class ACSS_Foll(ACSS):
         async def predicate(_m):
             # print(f"my layer ID: {self.mpc_instance.layer_ID}")
             dispersal_msg, commits, ephkey = self.decode_proposal(_m)
+
             # print(f"my layer ID: {self.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
             return self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
 
