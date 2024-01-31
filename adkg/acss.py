@@ -1,7 +1,7 @@
 import asyncio
 from collections import defaultdict
 from pickle import dumps, loads
-import re
+import re, time
 from adkg.polynomial import polynomials_over
 from adkg.symmetric_crypto import SymmetricCrypto
 from adkg.utils.misc import wrap_send, subscribe_recv
@@ -1334,9 +1334,13 @@ class ACSS_Foll(ACSS):
 
         async def predicate(_m):
             # print(f"my layer ID: {self.mpc_instance.layer_ID}")
+            predicate_time = time.time()
             dispersal_msg, commits, ephkey = self.decode_proposal_aprep(_m)
             # print(f"my layer ID: {self.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
-            return self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
+            flag = self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
+            predicate_time = time.time() - predicate_time
+            print(f"predicate_time: {predicate_time}")
+            return flag
 
         # 下一层也运行optrbc ，接受到上一层optrbc的结果
         # 改变一下 rbctag 进行测试

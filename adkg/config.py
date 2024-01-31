@@ -59,6 +59,7 @@ class HbmpcConfig(object):
     peers = None
     layers = None
     my_send_id = None
+    total_cm = None
     skip_preprocessing = False
     extras = None
     reconstruction = None
@@ -107,6 +108,7 @@ class HbmpcConfig(object):
                 for peerid, addrinfo in enumerate(config["peers"])
             }
             HbmpcConfig.layers = config["layers"]
+            HbmpcConfig.total_cm = config["total_cm"]
             HbmpcConfig.time = args.time
 
             if "skip_preprocessing" in config:
@@ -131,3 +133,4 @@ class HbmpcConfig(object):
             assert HbmpcConfig.time is not None, "time: missing"
             assert HbmpcConfig.layers is not None, "layers: missing"
             assert HbmpcConfig.my_send_id is not None, "my_send_id: missing"
+            assert HbmpcConfig.total_cm is not None, "total_cm: missing"

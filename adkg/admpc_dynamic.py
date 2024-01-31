@@ -279,12 +279,13 @@ def gen_vector(t, n, ZR):
 
 # 管理所有的MPC实例
 class ADMPC_Multi_Layer_Control():
-    def __init__(self, n=None, t= None, deg=None, layer_num=None, pks=None):
+    def __init__(self, n=None, t= None, deg=None, layer_num=None, total_cm=None, pks=None):
         # 初始化
         self.n = n
         self.t = t
         self.deg = deg
         self.layer_num = layer_num
+        self.total_cm = total_cm
         self.control_signal = asyncio.Event()
         self.pks_all = [[None] * self.n for _ in range(self.layer_num)]
         if pks is not None: 
@@ -336,9 +337,9 @@ class ADMPC_Multi_Layer_Control():
 # 我们需要在这个子类中能够引用控制所有MPC的ADMPC_Multi_Layer_Control 实例
 # 而且每个Node要知道自己在第几层
 class ADMPC_Dynamic(ADMPC):
-    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices, layerID = None, admpc_control_instance=None):
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrices, total_cm, layerID = None, admpc_control_instance=None):
         # 给每个MPC实例增加了self.admpc_control_instance的属性，使得能够通过这个属性访问控制所有MPC实例的类，从而访问对应的公钥组等
-        self.admpc_control_instance = admpc_control_instance if admpc_control_instance is not None else ADMPC_Multi_Layer_Control(n, t, deg, int(len(public_keys)/n), public_keys)
+        self.admpc_control_instance = admpc_control_instance if admpc_control_instance is not None else ADMPC_Multi_Layer_Control(n=n, t=t, deg=deg, layer_num=int(len(public_keys)/n), total_cm=total_cm, pks=public_keys)
         self.layer_ID = layerID
         # self.public_keys = public_keys[n*layerID:n*layerID+n]
         self.sc = ceil((deg+1)/(t+1)) + 1
@@ -408,12 +409,12 @@ class ADMPC_Dynamic(ADMPC):
 
     
     async def run_computation(self, inputs, gate_tape, mult_triples):
-        self.gates_num = int(len(inputs)/2)
-        # 这里根据当前层门的数量对输入进行划分
+        # 这里简化一下，后面的代码是正常的执行计算的过程，这里为了方便测试作了简化，只计算乘法
+        self. gates_num = len(gate_tape)
         gate_input_values = [[self.ZR(0) for _ in range(2)] for _ in range(self.gates_num)]
         for i in range(self.gates_num): 
             for j in range(2): 
-                gate_input_values[i][j] = inputs[i*2+j]
+                gate_input_values[i][j] = inputs[j]
         # 输出存在这里
         gate_output_values = [None] * self.gates_num
         # 这两个用来记录当前层的乘法门位置和数量，用来做当前层乘法门的批处理
@@ -435,11 +436,44 @@ class ADMPC_Dynamic(ADMPC):
 
         # self.output_queue.put_nowait(gate_output_values)
         return gate_output_values
+
+
+        # self.gates_num = int(len(inputs)/2)
+        # # 这里根据当前层门的数量对输入进行划分
+        # gate_input_values = [[self.ZR(0) for _ in range(2)] for _ in range(self.gates_num)]
+        # for i in range(self.gates_num): 
+        #     for j in range(2): 
+        #         gate_input_values[i][j] = inputs[i*2+j]
+        # # 输出存在这里
+        # gate_output_values = [None] * self.gates_num
+        # # 这两个用来记录当前层的乘法门位置和数量，用来做当前层乘法门的批处理
+        # batch_mult_gates, mult_pos = [], []
+        # triple_num = 0
+        # for i in range(self.gates_num): 
+        #     # 这是加法
+        #     if gate_tape[i] == 0: 
+        #         gate_output_values[i] = gate_input_values[i][0] + gate_input_values[i][1]
+        #     # 这是乘法
+        #     else: 
+        #         batch_mult_gates.append(gate_input_values[i])
+        #         mult_pos.append(i)
+        #         # gate_output_values[i] = await self.mult(gate_input_values[i], mult_triples[triple_num])
+        #         # triple_num += 1
+        # batch_mult_outputs = await self.mult(batch_mult_gates, mult_triples)
+        # for i in range(len(mult_pos)): 
+        #     gate_output_values[mult_pos[i]] = batch_mult_outputs[i]
+
+        # # self.output_queue.put_nowait(gate_output_values)
+        # return gate_output_values
     
     
     async def run_admpc(self, start_time):
         acss_start_time = time.time()
         self.public_keys = self.public_keys[self.n*self.layer_ID:self.n*self.layer_ID+self.n]
+        cm = int(self.admpc_control_instance.total_cm/(self.admpc_control_instance.layer_num-1))
+        w = cm
+        len_values = cm
+        print(f"cm: {cm} total_cm: {self.admpc_control_instance.total_cm}")
 
         # 我们假设 layer_ID = 0 时是 clients 提供输入给 servers
         if self.layer_ID == 0:
@@ -466,7 +500,7 @@ class ADMPC_Dynamic(ADMPC):
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
             # 这里 w 和 cm 根据 n 和 t 的不同需要手动改
-            w = int(self.n / 2)
+            # w = int(self.n / 2) 
             if w > self.n - self.t: 
                 rounds = math.ceil(w / (self.n - self.t))
             else: 
@@ -482,8 +516,9 @@ class ADMPC_Dynamic(ADMPC):
             await rand_pre_task
 
             # clients step 3 调用 Aprep 协议传递三元组给下一层
-            cm = int(self.n / 2)
-
+            # cm = int(self.n / 2)
+            # cm = 100
+            st_time = time.time()
             apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -492,8 +527,11 @@ class ADMPC_Dynamic(ADMPC):
                           aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
             await aprep_pre_task
+            all_time = time.time() - st_time
+            print(f"all_time: {all_time}")
 
-            await asyncio.sleep(1)
+            # 没有办法用 signal 来控制不同层的传输，因此这里先设置一个 sleep 信号，后面得改
+            await asyncio.sleep(30)
 
         elif self.layer_ID == 1: 
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
@@ -512,7 +550,9 @@ class ADMPC_Dynamic(ADMPC):
                                     acsssend, acssrecv, self.pc, self.ZR, self.G1, 
                                     mpc_instance=self
                                 )
-                self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, 1))
+                # 这里的 rounds 也是手动更改的
+                rounds = 1
+                self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
                 # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
@@ -524,6 +564,7 @@ class ADMPC_Dynamic(ADMPC):
             for i in range(len(dealer)): 
                 for j in range(len(shares[i]['msg'])): 
                     new_shares.append(shares[i]['msg'][j])
+            print(f"new_shares: {new_shares}")
 
             
             # 这是 step 2 接收上一层的随机数
@@ -532,8 +573,8 @@ class ADMPC_Dynamic(ADMPC):
             rand_foll = Rand_Foll(self.public_keys, self.private_key, 
                                   self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                   randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
-            w = int(len(new_shares)/2)
+            # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置，这里也是手动改得
+            # w = int(len(new_shares)/2)
             if w > self.n - self.t: 
                 rounds = math.ceil(w / (self.n - self.t))
             else: 
@@ -541,9 +582,10 @@ class ADMPC_Dynamic(ADMPC):
             # w, rounds = 2, 1           
             rand_shares = await rand_foll.run_rand(w, rounds)
             
-            # print(f"rand_shares: {rand_shares}")
+            print(f"rand_shares: {rand_shares}")
 
             # # 这是 step 3 接收上一层的三元组
+            aprep_time = time.time()
             apreptag = ADMPCMsgType.APREP + str(self.layer_ID)
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -551,16 +593,18 @@ class ADMPC_Dynamic(ADMPC):
                           self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                           aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
 
-            # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
-            cm = int(len(new_shares)/2)
-            # cm = 2
+            # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组,手动
+            # cm = int(len(new_shares)/2)
+            # cm = 100
             new_mult_triples = await aprep_foll.run_aprep(cm)
-            # print(f"new triples: {new_mult_triples}")
+            aprep_time = time.time() - aprep_time
+            print(f"aprep_time: {aprep_time}")
+            print(f"new triples: {new_mult_triples}")
 
 
             # 这里是 execution stage 的 step 1，执行当前层的计算
             gate_tape = []
-            for i in range(int(len(new_shares)/2)): 
+            for i in range(cm): 
                 gate_tape.append(1)
             gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
             # print(f"my id: {self.my_id} outputs: {gate_outputs}")
@@ -568,8 +612,8 @@ class ADMPC_Dynamic(ADMPC):
             if self.layer_ID + 1 < len(self.admpc_control_instance.pks_all):
             # if self.admpc_control_instance.pks_all[self.layer_ID + 1] is not None: 
                 # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
-                # w 是需要生成的随机数的数量
-                w = int(len(gate_outputs)/2)
+                # w 是需要生成的随机数的数量 手动
+                # w = int(len(gate_outputs)/2)
                 # w = 1
                 if w > self.n - self.t: 
                     rounds = math.ceil(w / (self.n - self.t))
@@ -584,8 +628,8 @@ class ADMPC_Dynamic(ADMPC):
                                     randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
                 rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
 
-                # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 
-                cm = int(len(gate_outputs)/2)
+                # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 手动
+                # cm = int(len(gate_outputs)/2)
                 # cm = 1
 
                 apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
@@ -608,7 +652,7 @@ class ADMPC_Dynamic(ADMPC):
                 self.admpc_control_instance.control_signal.set()
                 
                 print("end")
-                await asyncio.sleep(1)
+                await asyncio.sleep(30)
             else: 
                 print("over")
         else:
@@ -626,7 +670,7 @@ class ADMPC_Dynamic(ADMPC):
                             transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
             # 这里也是假设当前 servers 知道上一层电路门输出的数量
             # 这里也需要手动改
-            len_values = int(self.n / 2)
+            # len_values = int(self.n / 2)
             new_shares = await trans_foll.run_trans(len_values)
             print(f"new shares: {new_shares}")
                 
@@ -639,7 +683,7 @@ class ADMPC_Dynamic(ADMPC):
                                   self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                   randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置
-            w = int(len(new_shares)/2)
+            # w = int(len(new_shares)/2)
             # w = 1
             if w > self.n - self.t: 
                 rounds = math.ceil(w / (self.n - self.t))
@@ -659,7 +703,7 @@ class ADMPC_Dynamic(ADMPC):
                           aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
 
             # 这里同样也是假设当前层的 servers 知道该层需要多少乘法三元组
-            cm = int(len(new_shares)/2)
+            # cm = int(len(new_shares)/2)
             # cm = 1
             new_mult_triples = await aprep_foll.run_aprep(cm)
             # print(f"new triples: {new_mult_triples}")
@@ -667,7 +711,7 @@ class ADMPC_Dynamic(ADMPC):
 
             # 这里是 execution stage 的 step 1，执行当前层的计算
             gate_tape = []
-            for i in range(int(len(new_shares)/2)): 
+            for i in range(cm): 
                 gate_tape.append(1)
             gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
             print(f"my id: {self.my_id} outputs: {gate_outputs}")
@@ -676,7 +720,7 @@ class ADMPC_Dynamic(ADMPC):
             # if self.admpc_control_instance.pks_all[self.layer_ID + 1] is not None: 
                 # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
                 # w 是需要生成的随机数的数量
-                w = int(len(gate_outputs)/2)
+                # w = int(len(gate_outputs)/2)
                 # w = 1
                 if w > self.n - self.t: 
                     rounds = math.ceil(w / (self.n - self.t))
@@ -692,7 +736,7 @@ class ADMPC_Dynamic(ADMPC):
                 rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
 
                 # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 
-                cm = int(len(gate_outputs)/2)
+                # cm = int(len(gate_outputs)/2)
                 # cm = 1
 
                 apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
@@ -714,6 +758,7 @@ class ADMPC_Dynamic(ADMPC):
                 self.admpc_control_instance.control_signal.set()
                 
                 print("end")
+                await asyncio.sleep(30)
             else: 
                 print("over")
         

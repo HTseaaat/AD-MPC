@@ -23,9 +23,9 @@ cd adkg
 # copy these files to each node
 for i in $(seq 1 $NODE_NUM); do
     ssh_user_host="${NODE_SSH_USERNAME}@${NODE_IPS[$i - 1]}"
-    ssh "$ssh_user_host" -- "cd htadkg/adkg && rm -rf admpc.py"
+    ssh "$ssh_user_host" -- "cd htadkg/adkg && rm -rf admpc_dynamic.py"
     # ssh "$ssh_user_host" -- "cd htadkg/conf && rm -rf admpc_4.tar.xz && rm -rf admpc_4"
-    scp "admpc.py" "$ssh_user_host:~/htadkg/adkg"
+    scp "admpc_dynamic.py" "$ssh_user_host:~/htadkg/adkg"
     # ssh "$ssh_user_host" -- "cd htadkg/conf && tar Jxf admpc_16.tar.xz"
     # scp "./dist/sdumoe-chain-ethermint.docker.image.tar.xz" "$ssh_user_host:~/sdumoe-docker/sdumoe-chain-ethermint.docker.image.tar.xz"
     # scp "./dist/sdumoe-chain-backend.docker.image.tar.xz" "$ssh_user_host:~/sdumoe-docker/sdumoe-chain-backend.docker.image.tar.xz"

@@ -70,7 +70,7 @@ def gen_vector(t, n, ZR):
 
 async def tutorial_1():
     # Create a test network of 4 nodes (no sockets, just asyncio tasks)
-    n, t = 16, 5
+    n, t = 4, 1
 
     g, h, pks, sks = get_avss_params(n, t)
     router = SimpleRouter(n)

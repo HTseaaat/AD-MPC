@@ -649,6 +649,7 @@ class APREP_Pre(APREP):
         aprep_values = (mult_triples, chec_triples, cm)      
         # 这一步是 acss 的过程
         self.acss_task = asyncio.create_task(self.acss_step(aprep_values))
+        await self.acss_task
 
         
     
@@ -1041,21 +1042,30 @@ class APREP_Foll(APREP):
         gen_rand_outputs = []
 
         # 这里是调用 Protocol Rand 来生成随机数
+        gen_rand_time = time.time()
         gen_rand_outputs = await self.gen_rand_step(self.n*cm, gen_rand_outputs)
+        gen_rand_time = time.time() - gen_rand_time
+        print(f"gen_rand_time: {gen_rand_time}")
 
         # 这一步是 acss 的过程
+        acss_time = time.time()
         self.acss_task = asyncio.create_task(self.acss_step(cm))
         acss_outputs = await self.acss_task
+        acss_time = time.time() - acss_time
+        print(f"acss_time: {acss_time}")
         # print(f"aprep_acss_time: {time.time()-aprep_acss_start_time}")
         # print("acss_outputs: ", acss_outputs)
 
         # print(f"id: {self.my_id} gen_rand_outputs: {gen_rand_outputs}")
 
         # 这里调用 Protocol Robust-Rec 来重构出刚才生成的随机数的原始值
+        rec_time = time.time()
         self.member_list = []
         for i in range(self.n): 
             self.member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
         robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, 0)
+        rec_time = time.time() - rec_time
+        print(f"rec_time: {rec_time}")
         # print(f"tes_time: {time.time()-tes_time}")
 
         
@@ -1066,6 +1076,7 @@ class APREP_Foll(APREP):
         # 这里 'msg' 表示的是 phis 集合，'rand' 表示的是 phis_hat 集合，phis[0] 里面的元素是 mult_triples，phis[1] 里面的元素是 chec_triples
         # 这里 acss_outputs[n] 中的 n 代表的是不同节点提供的三元组
         # print(f"acss_outputs[0]['shares']['msg'][0][0]: {acss_outputs[0]['shares']['msg'][0][0]}")
+        rec_time1 = time.time()
         mult_triples_shares = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         chec_triples_shares = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
         rands = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
@@ -1092,6 +1103,8 @@ class APREP_Foll(APREP):
         aprep_rec_start_time = time.time()
         rec_list = rho_list + sigma_list
         robust_rec = await self.robust_rec_step(rec_list, 1)
+        rec_time1 = time.time() - rec_time1
+        print(f"rec_time1: {rec_time1}")
         # robust_rec_rho = await self.robust_rec_step(rho_list, robust_rec_signal)
         
         # robust_rec_sigma = await self.robust_rec_step(sigma_list, robust_rec_signal)

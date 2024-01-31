@@ -32,7 +32,7 @@ def gen_vector(t, n, ZR):
 
     return (vm.tolist())
 
-async def _run(peers, n, t, k, my_id, start_time, layers, my_send_id):
+async def _run(peers, n, t, k, my_id, start_time, layers, my_send_id, total_cm):
     g, h, pks, sks = get_avss_params(n*layers)
     pc = PolyCommitHybrid(g, h, ZR, multiexp)
     deg = k
@@ -50,7 +50,7 @@ async def _run(peers, n, t, k, my_id, start_time, layers, my_send_id):
         )
         curve_params = (ZR, G1, multiexp, dotprod)
         layerID = int(my_send_id/n)
-        with ADMPC_Dynamic(pks, sks[my_send_id], g, h, n, t, deg, my_id, send, recv, pc, curve_params, mat, layerID) as admpc: 
+        with ADMPC_Dynamic(pks, sks[my_send_id], g, h, n, t, deg, my_id, send, recv, pc, curve_params, mat, total_cm, layerID=layerID) as admpc: 
             while True:
                 if time.time() > start_time:
                     break
@@ -62,7 +62,7 @@ async def _run(peers, n, t, k, my_id, start_time, layers, my_send_id):
             admpc.kill()
             admpc_task.cancel()
             exec_time = time.time() - begin_time
-            print(f"exec_time: {exec_time}")
+            print(f"my_send_id: {my_send_id} exec_time: {exec_time}")
 
 
 
@@ -91,7 +91,8 @@ if __name__ == "__main__":
                 HbmpcConfig.my_id,
                 HbmpcConfig.time,
                 HbmpcConfig.layers, 
-                HbmpcConfig.my_send_id
+                HbmpcConfig.my_send_id,
+                HbmpcConfig.total_cm
             )
         )
     finally:

@@ -41,10 +41,11 @@ config = {
 async def tutorial_1():
     # Create a test network of 4 nodes (no sockets, just asyncio tasks)
     n, t = 4, 1
-    layer_num = 3
+    layer_num = 10
+    total_cm = 100
     deg = t
     start_time = time.time()
-    multi_mpc_instance = ADMPC_Multi_Layer_Control(n, t, deg, layer_num)
+    multi_mpc_instance = ADMPC_Multi_Layer_Control(n=n, t=t, deg=deg, layer_num=layer_num, total_cm=total_cm)
     await multi_mpc_instance.add()
     prog_time = time.time() - start_time
     print(f"admpc time: {prog_time}")

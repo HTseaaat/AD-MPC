@@ -224,7 +224,7 @@ class ADMPC:
         # print(f"rand_shares: {rand_shares}")
 
         # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组
-        cm = 2
+        cm = 100
 
         step3_start_time = time.time()
         apreptag = ADMPCMsgType.APREP

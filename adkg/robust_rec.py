@@ -308,7 +308,7 @@ class Robust_Rec:
         async def predicate(_m):
             # print(f"robust_rec my id {self.my_id} rec_id: {rec_id} ")
             return True
-
+        rec_rbc_time = time.time()
         async def _setup(j):            
             # starting RBC
             # rbctag = ROBUSTRECMsgType.ROBUSTREC + str(j)
@@ -343,8 +343,10 @@ class Robust_Rec:
         await asyncio.gather(*[_setup(j) for j in range(self.n)])
 
         rbc_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))  
-
-        # print(f"rbcl_list: {rbc_list}")
+        rec_rbc_time = time.time() - rec_rbc_time
+        print(f"rec_rbc_time: {rec_rbc_time}")
+        rec_de_time = time.time()
+        
         rbc_shares = [[None for _ in range(len(rbc_list))] for _ in range(len(sr.deserialize_fs(rbc_list[0])))]
         for i in range(len(sr.deserialize_fs(rbc_list[0]))): 
             for node in range(len(rbc_list)): 
@@ -374,14 +376,30 @@ class Robust_Rec:
             else: 
                 for j in range(len(err_list[i])): 
                     key_proposal.pop(err_list[i][j])
-        
+        rec_de_time = time.time() - rec_de_time
+        print(f"rec_de_time: {rec_de_time}")
 
         # 这一步是 MVBA 的过程
+        rec_mvba_time = time.time()
+        rec_agreement_time = time.time()
         create_acs_task = asyncio.create_task(self.agreement(key_proposal, rbc_shares, rec_id))
         acs, key_task, work_tasks = await create_acs_task
+        rec_agreement_time = time.time() - rec_agreement_time
+        print(f"rec_agreement_time: {rec_agreement_time}")
+        rec_commonsubset_time = time.time()
         await acs
+        rec_commonsubset_time = time.time() - rec_commonsubset_time
+        print(f"rec_commonsubset_time: {rec_commonsubset_time}")
+        rec_robust_time = time.time()
         output = await key_task
+        rec_robust_time = time.time() - rec_robust_time
+        print(f"rec_robust_time: {rec_robust_time}")
+        rec_worktasks_time = time.time()
         await asyncio.gather(*work_tasks)
+        rec_worktasks_time = time.time() - rec_worktasks_time
+        print(f"rec_worktasks_time: {rec_worktasks_time}")
+        rec_mvba_time = time.time() - rec_mvba_time
+        print(f"rec_mvba_time: {rec_mvba_time}")
         
         mks, rec_values = output
         # print(f"my id: {self.my_id} rec_value: {rec_values}")
