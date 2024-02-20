@@ -27,6 +27,7 @@ done
 
 # 压缩文件
 cd 
+rm -rf htadkg.tar.xz
 tar Jcf htadkg.tar.xz htadkg
 
 # copy these files to each node

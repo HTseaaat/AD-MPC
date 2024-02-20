@@ -475,12 +475,16 @@ class ADMPC_Dynamic(ADMPC):
         len_values = cm
         print(f"cm: {cm} total_cm: {self.admpc_control_instance.total_cm}")
 
+        # 计算每层的时间
+        layer_time = time.time()
+
         # 我们假设 layer_ID = 0 时是 clients 提供输入给 servers
         if self.layer_ID == 0:
 
             clients_inputs = [self.ZR.rand()]
 
             # 此处传递的公钥应该是下一层的公钥
+            acss_pre_time = time.time()
             pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
 
             # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
@@ -496,11 +500,14 @@ class ADMPC_Dynamic(ADMPC):
             # 在上一层中只需要创建一次avss即可        
             self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=clients_inputs))
             await self.acss_tasks[self.my_id]
+            acss_pre_time = time.time() - acss_pre_time
+            print(f"layer ID: {self.layer_ID} acss_pre_time: {acss_pre_time}")
 
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
             # 这里 w 和 cm 根据 n 和 t 的不同需要手动改
             # w = int(self.n / 2) 
+            rand_pre_time = time.time()
             if w > self.n - self.t: 
                 rounds = math.ceil(w / (self.n - self.t))
             else: 
@@ -514,11 +521,13 @@ class ADMPC_Dynamic(ADMPC):
                                 randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
             await rand_pre_task
+            rand_pre_time = time.time() - rand_pre_time
+            print(f"layer ID: {self.layer_ID} rand_pre_time: {rand_pre_time}")
 
             # clients step 3 调用 Aprep 协议传递三元组给下一层
             # cm = int(self.n / 2)
             # cm = 100
-            st_time = time.time()
+            aprep_pre_time = time.time()
             apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -527,17 +536,18 @@ class ADMPC_Dynamic(ADMPC):
                           aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
             await aprep_pre_task
-            all_time = time.time() - st_time
-            print(f"all_time: {all_time}")
+            aprep_pre_time = time.time() - aprep_pre_time
+            print(f"layer ID: {self.layer_ID} aprep_pre_time: {aprep_pre_time}")
 
             # 没有办法用 signal 来控制不同层的传输，因此这里先设置一个 sleep 信号，后面得改
-            await asyncio.sleep(30)
+            # await asyncio.sleep(30)
 
         elif self.layer_ID == 1: 
             # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
             # await self.admpc_control_instance.control_signal.wait()
             # self.admpc_control_instance.control_signal.clear()
             # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
+            recv_input_time = time.time()
             self.acss_tasks = [None] * self.n
             for dealer_id in range(self.n): 
                 # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
@@ -564,10 +574,13 @@ class ADMPC_Dynamic(ADMPC):
             for i in range(len(dealer)): 
                 for j in range(len(shares[i]['msg'])): 
                     new_shares.append(shares[i]['msg'][j])
-            print(f"new_shares: {new_shares}")
+            recv_input_time = time.time() - recv_input_time
+            print(f"layer ID: {self.layer_ID} recv_input_time: {recv_input_time}")
+            # print(f"new_shares: {new_shares}")
 
             
             # 这是 step 2 接收上一层的随机数
+            rand_foll_time = time.time()
             randtag = ADMPCMsgType.GENRAND + str(self.layer_ID)
             randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
             rand_foll = Rand_Foll(self.public_keys, self.private_key, 
@@ -581,11 +594,13 @@ class ADMPC_Dynamic(ADMPC):
                 rounds = 1
             # w, rounds = 2, 1           
             rand_shares = await rand_foll.run_rand(w, rounds)
+            rand_foll_time = time.time() - rand_foll_time
+            print(f"layer ID: {self.layer_ID} rand_foll_time: {rand_foll_time}")
             
-            print(f"rand_shares: {rand_shares}")
+            # print(f"rand_shares: {rand_shares}")
 
             # # 这是 step 3 接收上一层的三元组
-            aprep_time = time.time()
+            aprep_foll_time = time.time()
             apreptag = ADMPCMsgType.APREP + str(self.layer_ID)
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -597,16 +612,19 @@ class ADMPC_Dynamic(ADMPC):
             # cm = int(len(new_shares)/2)
             # cm = 100
             new_mult_triples = await aprep_foll.run_aprep(cm)
-            aprep_time = time.time() - aprep_time
-            print(f"aprep_time: {aprep_time}")
-            print(f"new triples: {new_mult_triples}")
+            aprep_foll_time = time.time() - aprep_foll_time
+            print(f"layer ID: {self.layer_ID} aprep_foll_time: {aprep_foll_time}")
+            # print(f"new triples: {new_mult_triples}")
 
 
             # 这里是 execution stage 的 step 1，执行当前层的计算
+            exec_time = time.time()
             gate_tape = []
             for i in range(cm): 
                 gate_tape.append(1)
             gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
+            exec_time = time.time() - exec_time
+            print(f"layer ID: {self.layer_ID} exec_time: {exec_time}")
             # print(f"my id: {self.my_id} outputs: {gate_outputs}")
 
             if self.layer_ID + 1 < len(self.admpc_control_instance.pks_all):
@@ -615,6 +633,7 @@ class ADMPC_Dynamic(ADMPC):
                 # w 是需要生成的随机数的数量 手动
                 # w = int(len(gate_outputs)/2)
                 # w = 1
+                rand_pre_time = time.time()
                 if w > self.n - self.t: 
                     rounds = math.ceil(w / (self.n - self.t))
                 else: 
@@ -627,11 +646,13 @@ class ADMPC_Dynamic(ADMPC):
                                     self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                     randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
                 rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+                rand_pre_time = time.time() - rand_pre_time
+                print(f"layer ID: {self.layer_ID} rand_pre_time: {rand_pre_time}")
 
                 # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 手动
                 # cm = int(len(gate_outputs)/2)
                 # cm = 1
-
+                aprep_pre_time = time.time()
                 apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
                 aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -639,8 +660,11 @@ class ADMPC_Dynamic(ADMPC):
                             self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                             aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
                 aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+                aprep_pre_time = time.time() - aprep_pre_time
+                print(f"layer ID: {self.layer_ID} aprep_pre_time: {aprep_pre_time}")
 
                 # 这里是 execution stage 的 step 4，调用 Trans 协议将当前层的电路输出传输到下一层
+                trans_pre_time = time.time()
                 transtag = ADMPCMsgType.TRANS + str(self.layer_ID+1)
                 transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
 
@@ -650,9 +674,11 @@ class ADMPC_Dynamic(ADMPC):
                 trans_pre_task = asyncio.create_task(trans_pre.run_trans(gate_outputs, rand_shares))
                 
                 self.admpc_control_instance.control_signal.set()
+                trans_pre_time = time.time() - trans_pre_time
+                print(f"layer ID: {self.layer_ID} trans_pre_time: {trans_pre_time}")
                 
                 print("end")
-                await asyncio.sleep(30)
+                # await asyncio.sleep(30)
             else: 
                 print("over")
         else:
@@ -662,6 +688,7 @@ class ADMPC_Dynamic(ADMPC):
             # self.admpc_control_instance.control_signal.clear()
             # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
             print(f"ok")
+            trans_foll_time = time.time()
             transtag = ADMPCMsgType.TRANS + str(self.layer_ID)
             transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
 
@@ -672,11 +699,14 @@ class ADMPC_Dynamic(ADMPC):
             # 这里也需要手动改
             # len_values = int(self.n / 2)
             new_shares = await trans_foll.run_trans(len_values)
-            print(f"new shares: {new_shares}")
+            trans_foll_time = time.time() - trans_foll_time
+            print(f"layer ID: {self.layer_ID} trans_foll_time: {trans_foll_time}")
+            # print(f"new shares: {new_shares}")
                 
 
 
             # 这是 step 2 接收上一层的随机数
+            rand_foll_time = time.time()
             randtag = ADMPCMsgType.GENRAND + str(self.layer_ID)
             randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
             rand_foll = Rand_Foll(self.public_keys, self.private_key, 
@@ -691,10 +721,13 @@ class ADMPC_Dynamic(ADMPC):
                 rounds = 1
             # w, rounds = 2, 1           
             rand_shares = await rand_foll.run_rand(w, rounds)
+            rand_foll_time = time.time() - rand_foll_time
+            print(f"layer ID: {self.layer_ID} rand_foll_time: {rand_foll_time}")
             
             # print(f"rand_shares: {rand_shares}")
 
             # # 这是 step 3 接收上一层的三元组
+            aprep_foll_time = time.time()
             apreptag = ADMPCMsgType.APREP + str(self.layer_ID)
             aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -706,22 +739,28 @@ class ADMPC_Dynamic(ADMPC):
             # cm = int(len(new_shares)/2)
             # cm = 1
             new_mult_triples = await aprep_foll.run_aprep(cm)
+            aprep_foll_time = time.time() - aprep_foll_time
+            print(f"layer ID: {self.layer_ID} aprep_foll_time: {aprep_foll_time}")
             # print(f"new triples: {new_mult_triples}")
 
 
             # 这里是 execution stage 的 step 1，执行当前层的计算
+            exec_time = time.time()
             gate_tape = []
             for i in range(cm): 
                 gate_tape.append(1)
             gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
-            print(f"my id: {self.my_id} outputs: {gate_outputs}")
+            exec_time = time.time() - exec_time
+            print(f"layer ID: {self.layer_ID} exec_time: {exec_time}")
+            # print(f"my id: {self.my_id} outputs: {gate_outputs}")
 
             if self.layer_ID + 1 < len(self.admpc_control_instance.pks_all):
             # if self.admpc_control_instance.pks_all[self.layer_ID + 1] is not None: 
                 # 这里是 execution stage 的 step 2，调用 rand 协议为下一层生成随机数
-                # w 是需要生成的随机数的数量
+                # w 是需要生成的随机数的数量 手动
                 # w = int(len(gate_outputs)/2)
                 # w = 1
+                rand_pre_time = time.time()
                 if w > self.n - self.t: 
                     rounds = math.ceil(w / (self.n - self.t))
                 else: 
@@ -734,11 +773,13 @@ class ADMPC_Dynamic(ADMPC):
                                     self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                     randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
                 rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+                rand_pre_time = time.time() - rand_pre_time
+                print(f"layer ID: {self.layer_ID} rand_pre_time: {rand_pre_time}")
 
-                # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 
+                # 这里是 execution stage 的 step 3，调用 Aprep 协议为下一层生成乘法三元组 手动
                 # cm = int(len(gate_outputs)/2)
                 # cm = 1
-
+                aprep_pre_time = time.time()
                 apreptag = ADMPCMsgType.APREP + str(self.layer_ID+1)
                 aprepsend, apreprecv = self.get_send(apreptag), self.subscribe_recv(apreptag)
 
@@ -746,8 +787,11 @@ class ADMPC_Dynamic(ADMPC):
                             self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                             aprepsend, apreprecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
                 aprep_pre_task = asyncio.create_task(aprep_pre.run_aprep(cm))
+                aprep_pre_time = time.time() - aprep_pre_time
+                print(f"layer ID: {self.layer_ID} aprep_pre_time: {aprep_pre_time}")
 
                 # 这里是 execution stage 的 step 4，调用 Trans 协议将当前层的电路输出传输到下一层
+                trans_pre_time = time.time()
                 transtag = ADMPCMsgType.TRANS + str(self.layer_ID+1)
                 transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
 
@@ -755,11 +799,16 @@ class ADMPC_Dynamic(ADMPC):
                                 self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                 transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
                 trans_pre_task = asyncio.create_task(trans_pre.run_trans(gate_outputs, rand_shares))
+                
                 self.admpc_control_instance.control_signal.set()
+                trans_pre_time = time.time() - trans_pre_time
+                print(f"layer ID: {self.layer_ID} trans_pre_time: {trans_pre_time}")
                 
                 print("end")
-                await asyncio.sleep(30)
+                # await asyncio.sleep(30)
             else: 
                 print("over")
+        layer_time = time.time() - layer_time
+        print(f"layer ID: {self.layer_ID} layer_time: {layer_time}")
         
         

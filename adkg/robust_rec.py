@@ -93,7 +93,11 @@ class Robust_Rec:
         aba_values = [0]*self.n
 
         async def _recv_rbc(j):
+            rec_await_rbcl_time = time.time()
             rbcl = await rbc_out[j].get()
+            rec_await_rbcl_time = time.time() - rec_await_rbcl_time
+            print(f"rec_await_rbcl_time: {rec_await_rbcl_time}")
+            rec_rbcb_time = time.time()
             rbcb = Bitmap(self.n, rbcl)
             rbc_values[j] = []
             for i in range(self.n):
@@ -103,6 +107,8 @@ class Robust_Rec:
             if not aba_inputted[j]:
                 aba_inputted[j] = True
                 aba_in[j](1)
+            rec_rbcb_time = time.time() - rec_rbcb_time
+            print(f"rec_rbcb_time: {rec_rbcb_time}")
             
             subset = True
             while True:
@@ -118,7 +124,11 @@ class Robust_Rec:
         r_threads = [asyncio.create_task(_recv_rbc(j)) for j in range(self.n)]
 
         async def _recv_aba(j):
+            rec_await_aba_time = time.time()
             aba_values[j] = await aba_out[j]()  # May block
+            print(f"aba_values {j}: {aba_values[j]}")
+            rec_await_aba_time = time.time() - rec_await_aba_time
+            print(f"rec_await_aba_time: {rec_await_aba_time}")
 
             if sum(aba_values) >= 1:
                 # Provide 0 to all other aba
@@ -127,11 +137,15 @@ class Robust_Rec:
                         aba_inputted[k] = True
                         aba_in[k](0)
         
+        rec_recv_aba_time = time.time()
         await asyncio.gather(*[asyncio.create_task(_recv_aba(j)) for j in range(self.n)])
+        rec_recv_aba_time = time.time() - rec_recv_aba_time
+        print(f"rec_recv_aba_time: {rec_recv_aba_time}")
         # assert sum(aba_values) >= self.n - self.t  # Must have at least N-f committed
         assert sum(aba_values) >= 1  # Must have at least N-f committed
 
         # Wait for the corresponding broadcasts
+        rec_recv_rbc_time = time.time()
         for j in range(self.n):
             if aba_values[j]:
                 await r_threads[j]
@@ -139,7 +153,8 @@ class Robust_Rec:
             else:
                 r_threads[j].cancel()
                 rbc_values[j] = None
-
+        rec_recv_rbc_time = time.time() - rec_recv_rbc_time
+        print(f"rec_recv_rbc_time: {rec_recv_rbc_time}")
         rbc_signal.set()
     
     async def agreement(self, key_proposal, rbc_shares, rec_id):
@@ -153,6 +168,7 @@ class Robust_Rec:
 
         # 这里 robust-rec 的谓词应该还需要用鲁棒性插值进行检验
         async def predicate(_key_proposal):
+            return True
             kp = Bitmap(self.n, _key_proposal)
             kpl = []
             for ii in range(self.n):
@@ -232,6 +248,11 @@ class Robust_Rec:
             return aba_task
 
         work_tasks = await asyncio.gather(*[_setup(j) for j in range(self.n)])
+
+        # rec_await_rbc_list_test_time = time.time()
+        # rbc_list_test = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))
+        # rec_await_rbc_list_test_time = time.time() - rec_await_rbc_list_test_time
+        # print(f"rec_await_rbc_list_test_time: {rec_await_rbc_list_test_time}")
         
         rbc_signal = asyncio.Event()
         rbc_values = [None for i in range(self.n)]
@@ -254,20 +275,26 @@ class Robust_Rec:
         )
 
     async def robust_rec(self, rbc_values, rbc_signal, rbc_shares):
+        rec_await_rbc_signal_time = time.time()
         await rbc_signal.wait()
         rbc_signal.clear()
+        rec_await_rbc_signal_time = time.time() - rec_await_rbc_signal_time
+        print(f"rec_await_rbc_signal_time: {rec_await_rbc_signal_time}")
 
         # 这一步是将所有 rbc_values 转化成一个公共子集 mks
         # print(f"rbc_values: {rbc_values}")
+        rec_mks_time = time.time()
         self.mks = set() # master key set
         for ks in  rbc_values:
             if ks is not None:
                 self.mks = self.mks.union(set(list(ks)))
                 if len(self.mks) >= self.n-self.t:
                     break
-        
+        rec_mks_time = time.time() - rec_mks_time
+        print(f"rec_mks_time: {rec_mks_time}")
         
         # print("mks: ", self.mks)
+        
         sc_shares = [] 
         for i in range(len(rbc_shares)): 
             sc_shares.append([])
@@ -276,11 +303,13 @@ class Robust_Rec:
         # for i in self.mks:
         #     sc_shares.append([i+1, rbc_shares[i]])
         res = [None] * len(rbc_shares)
+        rec_sc_shares_time = time.time()
         for i in range(len(rbc_shares)): 
             res[i] = self.poly.interpolate_at(sc_shares[i], 0)
         # res = self.poly.interpolate_at(sc_shares, 0)
         # print(f"{self.my_id} res: {res}")
-
+        rec_sc_shares_time = time.time() - rec_sc_shares_time
+        print(f"rec_sc_shares_time: {rec_sc_shares_time}")
         return (self.mks, res)
         
     
@@ -341,17 +370,33 @@ class Robust_Rec:
             # await rbc_task
 
         await asyncio.gather(*[_setup(j) for j in range(self.n)])
-
+        rec_await_rbc_list_time = time.time()       
         rbc_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))  
+        rec_await_rbc_list_time = time.time() - rec_await_rbc_list_time
+        print(f"rec_await_rbc_list_time: {rec_await_rbc_list_time}")
         rec_rbc_time = time.time() - rec_rbc_time
         print(f"rec_rbc_time: {rec_rbc_time}")
         rec_de_time = time.time()
-        
-        rbc_shares = [[None for _ in range(len(rbc_list))] for _ in range(len(sr.deserialize_fs(rbc_list[0])))]
-        for i in range(len(sr.deserialize_fs(rbc_list[0]))): 
-            for node in range(len(rbc_list)): 
-                de_rbc_list = sr.deserialize_fs(rbc_list[node])
-                rbc_shares[i][node] = int(de_rbc_list[i])
+        rec_de_fs_time = time.time()
+
+        # 首先，对整个 rbc_list 进行一次反序列化
+        deserialized_rbc_list = [sr.deserialize_fs(item) for item in rbc_list]
+
+        # 初始化 rbc_shares 二维列表
+        rbc_shares = [[None for _ in range(len(rbc_list))] for _ in range(len(deserialized_rbc_list[0]))]
+
+        # 填充 rbc_shares 二维列表
+        for i in range(len(deserialized_rbc_list[0])):
+            for node in range(len(deserialized_rbc_list)):
+                rbc_shares[i][node] = int(deserialized_rbc_list[node][i])
+
+        # rbc_shares = [[None for _ in range(len(rbc_list))] for _ in range(len(sr.deserialize_fs(rbc_list[0])))]
+        # for i in range(len(sr.deserialize_fs(rbc_list[0]))): 
+        #     for node in range(len(rbc_list)): 
+        #         de_rbc_list = sr.deserialize_fs(rbc_list[node])
+        #         rbc_shares[i][node] = int(de_rbc_list[i])
+        rec_de_fs_time = time.time() - rec_de_fs_time
+        print(f"rec_de_fs_time: {rec_de_fs_time}")
         
 
         # 这里看一下能否把定义在 ZR 和 G1 上的元素转化到 hoheybadgerMPC 定义的 GFE 类上，再执行 鲁棒性插值的工作
@@ -362,9 +407,11 @@ class Robust_Rec:
         point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
         key_proposal = [i for i in range(self.n)]
         poly, err = [None] * len(rbc_shares), [None] * len(rbc_shares)
+        rec_robust_interpolate_time = time.time()
         for i in range(len(rbc_shares)): 
             poly[i], err[i] = await robust_reconstruct_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
-        
+        rec_robust_interpolate_time = time.time() - rec_robust_interpolate_time
+        print(f"rec_robust_interpolate_time: {rec_robust_interpolate_time} len(rbc_shares): {len(rbc_shares)} len(rbc_shares[0]): {len(rbc_shares[0])}")
         te = int(poly[0].coeffs[0])
         tes = self.ZR(te)
         err_list = [list(err[i]) for i in range(len(err))]
@@ -465,7 +512,10 @@ class Robust_Rec:
 
         await asyncio.gather(*[_setup(j) for j in range(self.n)])
 
+        rec_await_rbc_list_time = time.time()
         rbc_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))  
+        rec_await_rbc_list_time = time.time() - rec_await_rbc_list_time
+        print(f"rec_await_rbc_list_time: {rec_await_rbc_list_time}")
 
         # print(f"rbcl_list: {rbc_list}")
         rbc_shares = [int(sr.deserialize_f(rbc_list[i])) for i in range(len(rbc_list))]

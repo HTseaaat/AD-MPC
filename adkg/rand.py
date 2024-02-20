@@ -523,27 +523,36 @@ class Rand_Foll(Rand):
             self.member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
 
         # 这里我们直接让 acss return 了，并没有用到他们设计的 异步队列 的 get，后续可能要修改
+        rand_acss_time = time.time()
         acss_signal = asyncio.Event()
         self.acss_task = asyncio.create_task(self.acss_step(rounds))
         acss_outputs = await self.acss_task
+        rand_acss_time = time.time() - rand_acss_time
+        print(f"rand_acss_time: {rand_acss_time}")
 
         key_proposal = list(acss_outputs.keys())
 
         # 这一步是 MVBA 的过程
+        rand_mvba_time = time.time()
         create_acs_task = asyncio.create_task(self.agreement_dynamic(key_proposal, acss_outputs, acss_signal))
         acs, key_task, work_tasks = await create_acs_task
         await acs
         output = await key_task
         await asyncio.gather(*work_tasks)
+        rand_mvba_time = time.time() - rand_mvba_time
+        print(f"rand_mvba_time: {rand_mvba_time}")
 
         mks, new_shares = output
         rand_shares = []
+        rand_shares_time = time.time()
         for i in range(self.rand_num): 
             if i == self.rand_num - 1: 
                 w = w - i * (self.n - self.t)
                 rand_shares = rand_shares + new_shares[i][:w]
             else: 
                 rand_shares = rand_shares + new_shares[i]
+        rand_shares_time = time.time() - rand_shares_time
+        print(f"rand_shares_time: {rand_shares_time}")
 
         # self.output_queue.put_nowait(rand_shares)
         return rand_shares

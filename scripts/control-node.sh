@@ -30,7 +30,7 @@ source -- ./config.sh
 # [ $# -ge 1 ] || (echo "Please input the command." 1>&2 && exit 1)
 
 base_port=7000  # 设定一个基础端口号，比如7000
-containers_per_node=10  # 每个服务器上的容器数量
+containers_per_node=6  # 每个服务器上的容器数量，相当于是多少层
 
 for j in $(seq 1 $containers_per_node); do
     for i in $(seq 1 $NODE_NUM); do
@@ -41,7 +41,7 @@ for j in $(seq 1 $containers_per_node); do
 
         # 运行 docker-compose 命令，为每个容器设置唯一的端口映射
         file_num=$(((j-1)*NODE_NUM+i-1))
-        ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.admpc_dynamic_run -d -f conf/admpc_cloud_16_10/local.$file_num.json -time 12" &
+        ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.admpc_dynamic_run -d -f conf/admpc_cloud_16_6/local.$file_num.json -time 12" &
         
         # 如果您有其他命令需要在节点上执行，请取消下面这行注释并适当调整
         # ssh "$ssh_user_host" -- "cd ~/sdumoe-chain-run && bash node-control.sh $i $@" || true

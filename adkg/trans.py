@@ -938,15 +938,13 @@ class Trans_Foll(Trans):
         rbc_tasks = [None] * self.n
         rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
 
-        
+        async def predicate(_m):
+            return True
 
         for dealer_id in range(self.n): 
             # 注意！dealer_id 这里要改一下
             # dealer_id = (self.mpc_instance.layer_ID - 1) * self.n + i
 
-            async def predicate(_m):
-                return True
-        
             rbctag =TRANSMsgType.MASK + str(dealer_id) # (M, msg)
             rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
             rbc_input = None
@@ -990,22 +988,98 @@ class Trans_Foll(Trans):
         await asyncio.gather(*rbc_tasks)
 
         # 这里存的是序列化的各方广播的 masked values and commitments
+        trans_await_rbcl_list = time.time()
         self.rbcl_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))
+        trans_await_rbcl_list = time.time() - trans_await_rbcl_list
+        print(f"trans_await_rbcl_list: {trans_await_rbcl_list}")
     
     async def run_trans(self, len_values):
         self.member_list = []
         for i in range(self.n): 
             self.member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
-        
+
         # 这里是协议 step 4
         # 我们需要先执行 rbc ，再在 acss 过程中去验证我们的 masked values 的值是否是正确的，这里我们需要一个 signal 来先让acss 协程等待 rbc 结束
-        await asyncio.create_task(self.rbc_masked_step_foll())
+        trans_rbc_time = time.time()
+        rbc_tasks = [None] * self.n
+        rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
+
+        async def predicate(_m):
+            return True
+
+        async def _setup(dealer_id):
+            # 注意！dealer_id 这里要改一下
+            # dealer_id = (self.mpc_instance.layer_ID - 1) * self.n + i
+
+            rbctag =TRANSMsgType.MASK + str(dealer_id) # (M, msg)
+            rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+            rbc_input = None
+
+            member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
+            for j in range(self.n): 
+                member_list.append(self.n * (self.mpc_instance.layer_ID) + j)
+
+            if self.my_id < dealer_id: 
+                rbc_tasks[dealer_id] = asyncio.create_task(
+                optqrbc_dynamic(
+                    rbctag,
+                    self.my_id,
+                    self.n+1,
+                    self.t,
+                    dealer_id,
+                    predicate,
+                    rbc_input,
+                    rbc_outputs[dealer_id].put_nowait,
+                    rbcsend,
+                    rbcrecv,
+                    member_list
+                ))
+            else: 
+                rbc_tasks[dealer_id] = asyncio.create_task(
+                optqrbc_dynamic(
+                    rbctag,
+                    self.my_id+1,
+                    self.n+1,
+                    self.t,
+                    dealer_id,
+                    predicate,
+                    rbc_input,
+                    rbc_outputs[dealer_id].put_nowait,
+                    rbcsend,
+                    rbcrecv,
+                    member_list
+                ))
+
+        # await asyncio.gather(*[rbc_tasks(j) for j in range(self.n)])
+        trans_await_gather_rbc_time = time.time()
+        await asyncio.gather(*[_setup(dealer_id) for dealer_id in range(self.n)])
+        # await asyncio.gather(*rbc_tasks)
+        trans_await_gather_rbc_time = time.time() - trans_await_gather_rbc_time
+        print(f"trans_await_gather_rbc_time: {trans_await_gather_rbc_time}")
+
+        # 这里存的是序列化的各方广播的 masked values and commitments
+        trans_await_rbcl_list = time.time()
+        self.rbcl_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))
+        trans_await_rbcl_list = time.time() - trans_await_rbcl_list
+        print(f"trans_await_rbcl_list: {trans_await_rbcl_list}")
+        trans_rbc_time = time.time() - trans_rbc_time
+        print(f"trans_rbc_time: {trans_rbc_time}")
+        
+        # # 这里是协议 step 4
+        # # 我们需要先执行 rbc ，再在 acss 过程中去验证我们的 masked values 的值是否是正确的，这里我们需要一个 signal 来先让acss 协程等待 rbc 结束
+        # trans_rbc_time = time.time()
+        # await asyncio.create_task(self.rbc_masked_step_foll())
+        # trans_rbc_time = time.time() - trans_rbc_time
+        # print(f"trans_rbc_time: {trans_rbc_time}")
 
         # 这里是协议 step 5
         # 这里我们直接让 acss return 了，并没有用到他们设计的 异步队列 的 get，后续可能要修改
+        trans_acss_time = time.time()
         acss_signal = asyncio.Event()
         self.acss_task = asyncio.create_task(self.acss_step(len_values))
         acss_outputs = await self.acss_task
+        trans_acss_time = time.time() - trans_acss_time
+        print(f"trans_acss_time: {trans_acss_time}")
         
         # # 这里对应协议的 step 6，这里的 LT 就对应论文中的 LT
         LT = list(acss_outputs.keys())
@@ -1041,6 +1115,7 @@ class Trans_Foll(Trans):
 
         # 这一步是 MVBA 的过程
         # 这里是协议的 step 7 和 8
+        trans_mvba_time = time.time()
         create_acs_task = asyncio.create_task(self.agreement(GT, de_masked_values, acss_outputs, acss_signal))
 
         acs, key_task, work_tasks = await create_acs_task
@@ -1048,6 +1123,8 @@ class Trans_Foll(Trans):
         output = await key_task
         await asyncio.gather(*work_tasks)
         new_shares = output
+        trans_mvba_time = time.time() - trans_mvba_time
+        print(f"trans_mvba_time: {trans_mvba_time}")
 
         return new_shares
         

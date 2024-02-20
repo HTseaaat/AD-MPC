@@ -1494,10 +1494,17 @@ class ACSS_Foll(ACSS):
         self.rand_num = rounds
         async def predicate(_m):
             # print(f"my layer ID: {self.mpc_instance.layer_ID}")
+            acss_decode_time = time.time()
             dispersal_msg, commits, ephkey = self.decode_proposal(_m)
+            acss_decode_time = time.time() - acss_decode_time
+            print(f"acss_decode_time: {acss_decode_time}")
 
             # print(f"my layer ID: {self.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
-            return self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
+            acss_verify_time = time.time()
+            res = self.verify_proposal(dealer_id, dispersal_msg, commits, ephkey)
+            acss_verify_time = time.time() - acss_verify_time
+            print(f"acss_verify_time: {acss_verify_time}")
+            return res
 
         # 下一层也运行optrbc ，接受到上一层optrbc的结果
         # 改变一下 rbctag 进行测试
@@ -1551,10 +1558,16 @@ class ACSS_Foll(ACSS):
 
         # signal = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID - 1][dealer_id].Signal
 
+        acss_rbc_time = time.time()
         rbc_msg = await output.get()
+        acss_rbc_time = time.time() - acss_rbc_time
+        print(f"acss_rbc_time: {acss_rbc_time}")
 
         # avss processing
+        acss_process_time = time.time()
         (dealer, _, shares, commitments) = await self._process_avss_msg_dynamic(avss_id, dealer_id, rbc_msg)
+        acss_process_time = time.time() - acss_process_time
+        print(f"acss_process_time: {acss_process_time}")
         return (dealer, _, shares, commitments)
         
         # for task in self.tagvars[acsstag]['tasks']:

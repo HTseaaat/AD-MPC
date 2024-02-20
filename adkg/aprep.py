@@ -1112,6 +1112,7 @@ class APREP_Foll(APREP):
         # print(f"aprep_rec_time: {time.time()-aprep_rec_start_time}")
         # print(f"robust_rec_rho: {robust_rec_rho}")
 
+        rec_time2 = time.time()
         robust_rec_rho = robust_rec[:int(len(robust_rec)/2)]
         robust_rec_sigma = robust_rec[int(len(robust_rec)/2):]
         rec_rho = [[0 for _ in range(cm)] for _ in range(len(acss_outputs))]
@@ -1147,9 +1148,12 @@ class APREP_Foll(APREP):
                     break
             key_proposal.append(node)
         # print(f"key_proposal: {key_proposal}")
+        rec_time2 = time.time() - rec_time2
+        print(f"rec_time2: {rec_time2}")
         
 
         # 这一步是 MVBA 的过程
+        aprep_mvba_time = time.time()
         create_acs_task = asyncio.create_task(self.agreement(key_proposal, mult_triples_shares, rec_tau, cm))
         acs, key_task, work_tasks = await create_acs_task
         await acs
@@ -1157,6 +1161,8 @@ class APREP_Foll(APREP):
         await asyncio.gather(*work_tasks)
         # mks, sk, pk = output
         new_mult_triples = output
+        aprep_mvba_time = time.time() - aprep_mvba_time
+        print(f"aprep_mvba_time: {aprep_mvba_time}")
         # self.output_queue.put_nowait((values[1], mks, sk, pk))
         # self.output_queue.put_nowait(new_mult_triples)
         return new_mult_triples
