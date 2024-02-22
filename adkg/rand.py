@@ -6,7 +6,7 @@ import hashlib, time
 from math import ceil
 import logging
 from adkg.utils.bitmap import Bitmap
-from adkg.acss import ACSS, ACSS_Pre, ACSS_Foll
+from adkg.acss import ACSS, ACSS_Pre, ACSS_Foll, ACSS_Fluid_Pre, ACSS_Fluid_Foll
 
 from adkg.broadcast.tylerba import tylerba
 from adkg.broadcast.optqrbc import optqrbc, optqrbc_dynamic
@@ -698,5 +698,133 @@ class Rand_Foll(Rand):
         for i in range(len(dealer)): 
             outputs[i] = {'shares':shares[i], 'commits':commitments[i]}
         return outputs
+
+
+class Rand_Fluid_Pre(Rand):
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrix, mpc_instance):
+        # 增加了一个属性：self.mpc_instance，使得Rand实例可以引用mpc_instance
+        self.mpc_instance = mpc_instance
+
+        super().__init__(public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrix)
+        
+
+    async def run_rand(self, w, rounds):
+        # 改变一下策略，让每个参与方一次性 acss rounds 个随机数
+        self.rand_num = rounds
+        values = [self.ZR.rand() for _ in range(rounds)]
+        self.acss_task = asyncio.create_task(self.acss_step(values))
+        
+    async def acss_step(self, values):
+
+        # 此处传递的公钥应该是下一层的公钥
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+        layerID = self.mpc_instance.layer_ID
+        pks_next_layer = admpc_control_instance.pks_all[layerID + 1]       # 下一层的公钥组
+
+        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+        acsstag = RANDMsgType.ACSS + str(layerID) + str(self.my_id)
+        acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+        self.acss = ACSS_Fluid_Pre(pks_next_layer, 
+                             self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                             acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                             mpc_instance=self.mpc_instance
+                         )
+        self.acss_tasks = [None] * self.n
+        # 在上一层中只需要创建一次avss即可        
+        self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=values))
+  
+class Rand_Fluid_Foll(Rand):
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrix, mpc_instance):
+        # 增加了一个属性：self.mpc_instance，使得Rand实例可以引用mpc_instance
+        self.mpc_instance = mpc_instance
+        
+        super().__init__(public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, matrix)  
+
+ 
+    async def run_rand(self, w, rounds):
+        self.rand_num = rounds
+        self.member_list = []
+        for i in range(self.n): 
+            self.member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
+
+        # 这里我们直接让 acss return 了，并没有用到他们设计的 异步队列 的 get，后续可能要修改
+        rand_acss_time = time.time()
+        acss_signal = asyncio.Event()
+        self.acss_task = asyncio.create_task(self.acss_step(rounds))
+        acss_outputs = await self.acss_task
+        rand_acss_time = time.time() - rand_acss_time
+        print(f"rand_acss_time: {rand_acss_time}")
+
+        key_proposal = list(acss_outputs.keys())
+
+        # 这几步就是每个节点把 shares 随机数，还有承诺提取到这几个二维列表里
+        secrets = [[self.ZR(0)]*self.n for _ in range(self.rand_num)]
+        randomness = [[self.ZR(0)]*self.n for _ in range(self.rand_num)]
+        commits = [[self.G1.identity()]*self.n for _ in range(self.rand_num)]
+        for idx in range(self.rand_num):
+            for node in range(self.n):
+                if node in key_proposal:
+                    # 重点！！这里 secrets 存的是 idx+1 ，也就是有 phi_hat 对应的 那个 phi 多项式，而不是 Feldman 承诺的 k=0 那个多项式
+                    secrets[idx][node] = acss_outputs[node]['shares']['msg'][idx]
+                    # print(f"secret[{idx}][{node}] = {secrets[idx][node]}")
+                    randomness[idx][node] = acss_outputs[node]['shares']['rand'][idx]
+                    # print(f"randomness[{idx}][{node}] = {randomness[idx][node]}")
+                    commits[idx][node] = acss_outputs[node]['commits'][idx][0]
+                    # print(f"commits[{idx}][{node}] = {commits[idx][node]}")
+        
+    
+        z_shares = [[self.ZR(0) for _ in range(self.n-self.t)] for _ in range(self.rand_num)]
+        # r_shares = [[self.ZR(0) for _ in range(self.n-self.t)] for _ in range(self.rand_num)]
+        # 这里 z_shares 和 r_shares 我们应该设置成二维数组，每个矩阵对应一个 z_shares 不知道这里为什么都给加起来了 —— 这里加起来是为了模拟 论文中的 a 和 b 共同构成一个高门限的多项式
+        # 这里矩阵的话也应该是有几个 rounds 就有几个矩阵，那么rounds应该作为 参数传递进来
+        for i in range(self.rand_num): 
+            for j in range(self.n-self.t): 
+                z_shares[i][j] = self.dotprod(self.matrix[j], secrets[i])
+
+
+        new_shares = z_shares
+        rand_shares = []
+        rand_shares_time = time.time()
+        for i in range(self.rand_num): 
+            if i == self.rand_num - 1: 
+                w = w - i * (self.n - self.t)
+                rand_shares = rand_shares + new_shares[i][:w]
+            else: 
+                rand_shares = rand_shares + new_shares[i]
+        rand_shares_time = time.time() - rand_shares_time
+        print(f"rand_shares_time: {rand_shares_time}")
+
+        # self.output_queue.put_nowait(rand_shares)
+        return rand_shares
+
+
+    async def acss_step(self, rounds):
+        self.acss_tasks = [None] * self.n
+        for dealer_id in range(self.n): 
+            # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+            acsstag = RANDMsgType.ACSS + str(self.mpc_instance.layer_ID - 1) + str(dealer_id)
+            acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+            # 此时传递的是本层的公私钥
+            self.acss = ACSS_Fluid_Foll(self.public_keys, self.private_key, 
+                                self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                mpc_instance=self.mpc_instance
+                            )
+            self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
+
+
+            # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
+
+        results = await asyncio.gather(*self.acss_tasks)
+        dealer, _, shares, commitments = zip(*results)
+        
+        outputs = {}
+        for i in range(len(dealer)): 
+            outputs[i] = {'shares':shares[i], 'commits':commitments[i]}
+        return outputs
+
+
 
                 

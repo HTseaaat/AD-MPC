@@ -1574,3 +1574,524 @@ class ACSS_Foll(ACSS):
         #     task.cancel()
         # self.tagvars[acsstag] = {}
         # del self.tagvars[acsstag]
+
+
+
+class ACSS_Fluid_Pre(ACSS):
+    def __init__(self, public_keys, g, h, n, t, deg, sc, my_id, send, recv, pc, field, G1, mpc_instance, private_key=None, rbc_values=None):
+        
+        # 增加了一个属性self.rand_instance，用来指向 Rand 实例
+        self.mpc_instance = mpc_instance
+
+        # 可以调用父类的 __init__ 来继承原始类的行为
+        super().__init__(public_keys, private_key, g, h, n, t, deg, sc, my_id, send, recv, pc, field, G1, rbc_values)
+
+    # 在这部分中，本层committee只需要做到用公钥加密待传递的消息，并把消息广播给下一层committe就好。
+    async def avss_aprep(self, avss_id, values=None, dealer_id=None):
+        # If `values` is passed then the node is a 'Sender'
+        # `dealer_id` must be equal to `self.my_id`
+        if values is not None:
+            if dealer_id is None:
+                dealer_id = self.my_id
+            assert dealer_id == self.my_id, "Only dealer can share values."
+        # If `values` is not passed then the node is a 'Recipient'
+        # Verify that the `dealer_id` is not the same as `self.my_id`
+        elif dealer_id is not None:
+            assert dealer_id != self.my_id
+        assert type(avss_id) is int
+
+        n = self.n
+        rbctag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID + 1}-B-RBC"
+        acsstag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID + 1}-B-AVSS"
+
+        broadcast_msg = None
+        if self.my_id == dealer_id:
+            # 这里的做法是把每个节点的份额用那个节点的公钥加密，然后打包在一起，放到 broadcast_msg 这个消息里，通过广播信道广播出去
+            broadcast_msg = self._get_dealer_msg_aprep(values, n)
+
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        logger.debug("[%d] Starting reliable broadcast", self.my_id)
+
+        async def predicate(_m):
+            # print(f"my layer ID: {self.mpc_instance.layer_ID} rbctag: {rbctag}, send: {send}, recv: {recv}")
+            dispersal_msg, commits, ephkey = self.decode_proposal_aprep(_m)
+            return self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
+        
+        output = asyncio.Queue()
+
+        # 把信号放入mpcnode 中
+        my_mpc_instance = self.mpc_instance
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
+        for i in range(self.n): 
+            member_list.append(n * (self.mpc_instance.layer_ID + 1) + i)
+        asyncio.create_task(
+        optqrbc_dynamic(
+            rbctag,
+            self.my_id,
+            self.n+1,
+            self.t,
+            self.my_id,
+            predicate,
+            broadcast_msg,
+            output.put_nowait,
+            send,
+            recv,
+            member_list
+        ))
+    
+    async def avss_trans(self, avss_id, values=None, dealer_id=None):
+        # If `values` is passed then the node is a 'Sender'
+        # `dealer_id` must be equal to `self.my_id`
+        if values is not None:
+            if dealer_id is None:
+                dealer_id = self.my_id
+            assert dealer_id == self.my_id, "Only dealer can share values."
+        # If `values` is not passed then the node is a 'Recipient'
+        # Verify that the `dealer_id` is not the same as `self.my_id`
+        elif dealer_id is not None:
+            assert dealer_id != self.my_id
+        assert type(avss_id) is int
+
+        self.len_values = len(values[0])
+        n = self.n
+        rbctag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID + 1}-B-RBC"
+
+        broadcast_msg = None
+        if self.my_id == dealer_id:
+            # 这里的做法是把每个节点的份额用那个节点的公钥加密，然后打包在一起，放到 broadcast_msg 这个消息里，通过广播信道广播出去
+            broadcast_msg = self._get_dealer_msg_trans(values, n)
+
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        logger.debug("[%d] Starting reliable broadcast", self.my_id)
+
+        async def predicate(_m):
+            return True
+        
+        output = asyncio.Queue()
+
+        # 把信号放入mpcnode 中
+        my_mpc_instance = self.mpc_instance
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
+        for i in range(self.n): 
+            member_list.append(n * (self.mpc_instance.layer_ID + 1) + i)
+        asyncio.create_task(
+        optqrbc_dynamic(
+            rbctag,
+            self.my_id,
+            self.n+1,
+            self.t,
+            self.my_id,
+            predicate,
+            broadcast_msg,
+            output.put_nowait,
+            send,
+            recv,
+            member_list
+        ))
+    
+    
+    async def avss(self, avss_id, values=None, dealer_id=None):
+        # If `values` is passed then the node is a 'Sender'
+        # `dealer_id` must be equal to `self.my_id`
+        if values is not None:
+            if dealer_id is None:
+                dealer_id = self.my_id
+            assert dealer_id == self.my_id, "Only dealer can share values."
+        # If `values` is not passed then the node is a 'Recipient'
+        # Verify that the `dealer_id` is not the same as `self.my_id`
+        elif dealer_id is not None:
+            assert dealer_id != self.my_id
+        assert type(avss_id) is int
+
+        n = self.n
+        rbctag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID + 1}-B-RBC"
+        acsstag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID + 1}-B-AVSS"
+
+        broadcast_msg = None
+        if self.my_id == dealer_id:
+            # 这里的做法是把每个节点的份额用那个节点的公钥加密，然后打包在一起，放到 broadcast_msg 这个消息里，通过广播信道广播出去
+            broadcast_msg = self._get_dealer_msg(values, n)
+
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        logger.debug("[%d] Starting reliable broadcast", self.my_id)
+
+        async def predicate(_m):
+            return True
+        
+        output = asyncio.Queue()
+
+        # 把信号放入mpcnode 中
+        my_mpc_instance = self.mpc_instance
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+
+        member_list = [(self.mpc_instance.layer_ID) * self.n + self.my_id]
+        for i in range(self.n): 
+            member_list.append(n * (self.mpc_instance.layer_ID + 1) + i)
+        asyncio.create_task(
+        optqrbc_dynamic(
+            rbctag,
+            self.my_id,
+            self.n+1,
+            self.t,
+            self.my_id,
+            predicate,
+            broadcast_msg,
+            output.put_nowait,
+            send,
+            recv,
+            member_list
+        ))
+
+class ACSS_Fluid_Foll(ACSS):
+    def __init__(self, public_keys, private_key, g, h, n, t, deg, sc, my_id, send, recv, pc, field, G1, mpc_instance, rbc_values=None):
+        self.mpc_instance = mpc_instance
+        if rbc_values is not None: 
+            self.rbc_values = rbc_values
+
+        # 可以调用父类的 __init__ 来继承原始类的行为
+        super().__init__(public_keys, private_key, g, h, n, t, deg, sc, my_id, send, recv, pc, field, G1, rbc_values)
+
+    async def _process_avss_msg_dynamic(self, avss_id, dealer_id, rbc_msg):
+        tag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-AVSS"
+        send, recv = self.get_send(tag), self.subscribe_recv(tag)
+        self._init_recovery_vars(tag)
+
+        multi_list = []
+        for i in range(self.n): 
+            multi_list.append(i + (self.mpc_instance.layer_ID) * self.n)
+
+        def multicast(msg):
+            for i in range(self.n):
+                send(multi_list[i], msg)
+
+        self.tagvars[tag]['io'] = [send, recv, multicast]
+        self.tagvars[tag]['in_share_recovery'] = False
+                
+        ok_set = set()
+        implicate_set = set()
+        output = False
+        self.tagvars[tag]['all_shares_valid'] = self._handle_dealer_msgs(tag, dealer_id)
+        print("self.tagvars[tag]['all_shares_valid']")
+
+        if self.tagvars[tag]['all_shares_valid']:
+            # 每个节点的 shares 存在这里
+            shares = {'msg': self.tagvars[tag]['shares'][0], 'rand':self.tagvars[tag]['shares'][1]}
+            commitments = self.tagvars[tag]['commitments']
+            # 这里测试一下
+            self.output_queue.put_nowait((dealer_id, avss_id, shares, commitments))
+            output = True
+            logger.debug("[%d] Output", self.my_id)
+            multicast((HbAVSSMessageType.OK, ""))
+            return (dealer_id, avss_id, shares, commitments)
+        else:
+            multicast((HbAVSSMessageType.IMPLICATE, self.private_key))
+            implicate_sent = True
+            logger.debug("Implicate Sent [%d]", dealer_id)
+            self.tagvars[tag]['in_share_recovery'] = True
+        
+
+        while True:
+            # Bracha-style agreement
+            sender, avss_msg = await recv()
+
+            # IMPLICATE
+            if avss_msg[0] == HbAVSSMessageType.IMPLICATE and not self.tagvars[tag]['in_share_recovery']:
+                if sender not in implicate_set:
+                    implicate_set.add(sender)
+                    logger.debug("Handling Implicate Message [%d]", dealer_id)
+                    # validate the implicate
+                    #todo: implicate should be forwarded to others if we haven't sent one
+                    if await self._handle_implication(tag, sender, avss_msg[1]):
+                        # proceed to share recovery
+                        logger.debug("Handle implication called [%d]", dealer_id)
+                        self.tagvars[tag]['in_share_recovery'] = True
+                        await self._handle_share_recovery(tag)
+                        logger.debug("[%d] after implication", self.my_id)
+
+            #todo find a more graceful way to handle different protocols having different recovery message types
+            if avss_msg[0] in [HbAVSSMessageType.KDIBROADCAST, HbAVSSMessageType.RECOVERY1, HbAVSSMessageType.RECOVERY2]:
+                await self._handle_share_recovery(tag, sender, avss_msg)
+            # OK
+            if avss_msg[0] == HbAVSSMessageType.OK and sender not in ok_set:
+                # logger.debug("[%d] Received OK from [%d]", self.my_id, sender)
+                ok_set.add(sender)
+
+            # The only condition where we can terminate
+            if (len(ok_set) == 3 * self.t + 1) and output:
+                logger.debug("[%d] exit", self.my_id)
+                break
+    
+    
+    async def avss_aprep(self, avss_id, dealer_id, cm):
+        self.cm = cm
+        if dealer_id is None:
+            dealer_id = self.my_id
+
+        # admpc_control_instance 是控制所有 MPC 实例的对象
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+        my_mpc_instance = self.mpc_instance
+
+        async def predicate(_m):
+            # print(f"my layer ID: {self.mpc_instance.layer_ID}")
+            predicate_time = time.time()
+            dispersal_msg, commits, ephkey = self.decode_proposal_aprep(_m)
+            # print(f"my layer ID: {self.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
+            flag = self.verify_proposal_aprep(dealer_id, dispersal_msg, commits, ephkey)
+            predicate_time = time.time() - predicate_time
+            print(f"predicate_time: {predicate_time}")
+            return flag
+
+        # 下一层也运行optrbc ，接受到上一层optrbc的结果
+        # 改变一下 rbctag 进行测试
+        rbctag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-RBC"
+        acsstag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-AVSS"
+
+        self.tagvars[acsstag] = {}
+        self.tagvars[acsstag]['tasks'] = []
+
+        output = asyncio.Queue()
+        broadcast_msg = None
+        
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        # 没看懂这里的 signal 设置的意义
+        # await signal.wait()
+        # 重点！！这里的 my_id 要修改一下，不然会跟 上一层的 dealer_id 重合，导致 rbc过程失效
+
+        member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
+        for i in range(self.n): 
+            member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
+        if self.my_id < dealer_id: 
+            asyncio.create_task(
+            optqrbc_dynamic(
+                rbctag,
+                self.my_id,
+                self.n+1,
+                self.t,
+                dealer_id,
+                predicate,
+                broadcast_msg,
+                output.put_nowait,
+                send,
+                recv,
+                member_list
+            ))
+        else: 
+            asyncio.create_task(
+            optqrbc_dynamic(
+                rbctag,
+                self.my_id+1,
+                self.n+1,
+                self.t,
+                dealer_id,
+                predicate,
+                broadcast_msg,
+                output.put_nowait,
+                send,
+                recv,
+                member_list
+            ))
+
+        # signal = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID - 1][dealer_id].Signal
+
+        rbc_msg = await output.get()
+
+        # avss processing
+        (dealer, _, shares, commitments) = await self._process_avss_msg_dynamic(avss_id, dealer_id, rbc_msg)
+        return (dealer, _, shares, commitments)
+        
+        # for task in self.tagvars[acsstag]['tasks']:
+        #     task.cancel()
+        # self.tagvars[acsstag] = {}
+        # del self.tagvars[acsstag]
+    
+    async def avss_trans(self, avss_id, dealer_id, len_values):
+        self.len_values = len_values
+
+        # admpc_control_instance 是控制所有 MPC 实例的对象
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+        my_mpc_instance = self.mpc_instance
+
+        async def predicate(_m):
+            # print(f"my layer ID: {self.mpc_instance.layer_ID}")
+            dispersal_msg, commits, ephkey = self.decode_proposal_trans(_m)
+            # print(f"my layer ID: {self.mpc_instance.layer_ID} my id: {self.my_id} dealer id: {dealer_id}")
+            return self.verify_proposal_trans(dealer_id, dispersal_msg, commits, ephkey)
+
+        # 下一层也运行optrbc ，接受到上一层optrbc的结果
+        # 改变一下 rbctag 进行测试
+        rbctag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-RBC"
+        acsstag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-AVSS"
+
+        self.tagvars[acsstag] = {}
+        self.tagvars[acsstag]['tasks'] = []
+
+        output = asyncio.Queue()
+        broadcast_msg = None
+        
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        # 没看懂这里的 signal 设置的意义
+        # await signal.wait()
+        # 重点！！这里的 my_id 要修改一下，不然会跟 上一层的 dealer_id 重合，导致 rbc过程失效
+
+        member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
+        for i in range(self.n): 
+            member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
+        if self.my_id < dealer_id: 
+            asyncio.create_task(
+            optqrbc_dynamic(
+                rbctag,
+                self.my_id,
+                self.n+1,
+                self.t,
+                dealer_id,
+                predicate,
+                broadcast_msg,
+                output.put_nowait,
+                send,
+                recv,
+                member_list
+            ))
+        else: 
+            asyncio.create_task(
+            optqrbc_dynamic(
+                rbctag,
+                self.my_id+1,
+                self.n+1,
+                self.t,
+                dealer_id,
+                predicate,
+                broadcast_msg,
+                output.put_nowait,
+                send,
+                recv,
+                member_list
+            ))
+
+        # signal = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID - 1][dealer_id].Signal
+
+        rbc_msg = await output.get()
+
+        # avss processing
+        (dealer, _, shares, commitments) = await self._process_avss_msg_dynamic(avss_id, dealer_id, rbc_msg)
+        return (dealer, _, shares, commitments)
+        
+        # for task in self.tagvars[acsstag]['tasks']:
+        #     task.cancel()
+        # self.tagvars[acsstag] = {}
+        # del self.tagvars[acsstag]
+    
+    
+    # 下一层committee只需要接受上一层发来的广播，接着处理即可
+    async def avss(self, avss_id, dealer_id, rounds):
+        if dealer_id is None:
+            dealer_id = self.my_id
+
+        # admpc_control_instance 是控制所有 MPC 实例的对象
+        admpc_control_instance = self.mpc_instance.admpc_control_instance
+        my_mpc_instance = self.mpc_instance
+
+        self.rand_num = rounds
+        async def predicate(_m):
+            # 在 Fluid MPC 这里，我们只是借用异步的广播，但是并不去验证这些 shares 的正确与否，因此所有的 predicate 函数我们都直接
+            # return true 就行
+            avss_fluid_foll_predicate_time = time.time()
+            dispersal_msg, commits, ephkey = self.decode_proposal(_m)
+
+            shared_key = ephkey**self.private_key
+        
+            try:
+                sharesb = SymmetricCrypto.decrypt(shared_key.__getstate__(), dispersal_msg)
+            except ValueError as e:  # TODO: more specific exception
+                logger.warn(f"Implicate due to failure in decrypting: {e}")
+                self.acss_status[dealer_id] = False
+                return False
+            
+            shares = self.sr.deserialize_fs(sharesb)
+            print(f"len shares: {len(shares)}")
+            print(f"self.rand_num: {self.rand_num}")
+
+            
+            
+            phis, phis_hat = shares[:self.rand_num], shares[self.rand_num:]
+           
+            
+            self.acss_status[dealer_id] = True
+            self.data[dealer_id] = [commits, phis, phis_hat, ephkey, shared_key]
+            avss_fluid_foll_predicate_time = time.time() - avss_fluid_foll_predicate_time
+            print(f"avss_fluid_foll_predicate_time: {avss_fluid_foll_predicate_time}")
+            return True
+
+        # 下一层也运行optrbc ，接受到上一层optrbc的结果
+        # 改变一下 rbctag 进行测试
+        rbctag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-RBC"
+        acsstag = f"{dealer_id}-{avss_id}-{self.mpc_instance.layer_ID}-B-AVSS"
+
+        self.tagvars[acsstag] = {}
+        self.tagvars[acsstag]['tasks'] = []
+
+        output = asyncio.Queue()
+        broadcast_msg = None
+        
+        send, recv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+        # 没看懂这里的 signal 设置的意义
+        # await signal.wait()
+        # 重点！！这里的 my_id 要修改一下，不然会跟 上一层的 dealer_id 重合，导致 rbc过程失效
+
+        member_list = [(self.mpc_instance.layer_ID - 1) * self.n + dealer_id]
+        for i in range(self.n): 
+            member_list.append(self.n * (self.mpc_instance.layer_ID) + i)
+        if self.my_id < dealer_id: 
+            asyncio.create_task(
+            optqrbc_dynamic(
+                rbctag,
+                self.my_id,
+                self.n+1,
+                self.t,
+                dealer_id,
+                predicate,
+                broadcast_msg,
+                output.put_nowait,
+                send,
+                recv,
+                member_list
+            ))
+        else: 
+            asyncio.create_task(
+            optqrbc_dynamic(
+                rbctag,
+                self.my_id+1,
+                self.n+1,
+                self.t,
+                dealer_id,
+                predicate,
+                broadcast_msg,
+                output.put_nowait,
+                send,
+                recv,
+                member_list
+            ))
+
+        # signal = admpc_control_instance.admpc_lists[my_mpc_instance.layer_ID - 1][dealer_id].Signal
+
+        acss_rbc_time = time.time()
+        rbc_msg = await output.get()
+        acss_rbc_time = time.time() - acss_rbc_time
+        print(f"acss_rbc_time: {acss_rbc_time}")
+
+        # avss processing
+        acss_process_time = time.time()
+        (dealer, _, shares, commitments) = await self._process_avss_msg_dynamic(avss_id, dealer_id, rbc_msg)
+        acss_process_time = time.time() - acss_process_time
+        print(f"acss_process_time: {acss_process_time}")
+        return (dealer, _, shares, commitments)
+        
+        # for task in self.tagvars[acsstag]['tasks']:
+        #     task.cancel()
+        # self.tagvars[acsstag] = {}
+        # del self.tagvars[acsstag]
+
+ 

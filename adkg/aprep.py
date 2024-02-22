@@ -428,7 +428,7 @@ class APREP:
 
         # rec_signal.set()
 
-        rec_values = await self.rec.batch_run_robust_rec(index, rec_shares)
+        rec_values = await self.rec.batch_robust_rec(index, rec_shares)
 
         return rec_values
         
@@ -467,22 +467,25 @@ class APREP:
 
         # 这一步是 acss 的过程
         # aprep_acss_start_time = time.time()
+        print(f"before acss")
         self.acss_task = asyncio.create_task(self.acss_step(acss_outputs, aprep_values, acss_signal))
         await acss_signal.wait()
         acss_signal.clear()
+        print(f"after acss")
         # print(f"aprep_acss_time: {time.time()-aprep_acss_start_time}")
         # print("acss_outputs: ", acss_outputs)
 
         # 这两步可以放到调用 robust-rec 之前
         await gen_rand_signal.wait()
         gen_rand_signal.clear()
-
+        print(f"after rand")
         # print(f"id: {self.my_id} gen_rand_outputs: {gen_rand_outputs}")
 
         # 这里调用 Protocol Robust-Rec 来重构出刚才生成的随机数的原始值
         # robust_rec_outputs = []
         tes_time = time.time()
         robust_rec_outputs = await self.robust_rec_step(gen_rand_outputs, 0)
+        print(f"after robust rec")
         # print(f"tes_time: {time.time()-tes_time}")
 
         
@@ -564,11 +567,13 @@ class APREP:
         
 
         # 这一步是 MVBA 的过程
+        print(f"before mvba")
         create_acs_task = asyncio.create_task(self.agreement(key_proposal, mult_triples_shares, rec_tau, cm))
         acs, key_task, work_tasks = await create_acs_task
         await acs
         output = await key_task
         await asyncio.gather(*work_tasks)
+        print(f"after mvba")
         # mks, sk, pk = output
         new_mult_triples = output
         # self.output_queue.put_nowait((values[1], mks, sk, pk))

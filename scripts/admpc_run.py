@@ -1,6 +1,6 @@
 from adkg.config import HbmpcConfig
 from adkg.ipc import ProcessProgramRunner
-from adkg.admpc import ADMPC
+from adkg.admpc_dynamic import ADMPC
 from adkg.poly_commit_hybrid import PolyCommitHybrid
 from pypairing import ZR, G1, blsmultiexp as multiexp, dotprod
 # from pypairing import Curve25519ZR as ZR, Curve25519G as G1, curve25519multiexp as multiexp, curve25519dotprod as dotprod

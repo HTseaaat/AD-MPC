@@ -14,7 +14,7 @@ if [ ! -f "$EXTRACTED_VALUES_FILE" ]; then
 fi
 
 # 使用awk提取rand_foll_time的值，计算总和和数量，最后计算平均值
-awk '/layer_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE > $AVERAGE_FILE
+awk '/honeybadgermpc_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE > $AVERAGE_FILE
 
 
 # 打印计算结果
