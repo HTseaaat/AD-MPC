@@ -13,7 +13,7 @@ fi
 
 # 提取rec_time和rand_foll_time值及其标题并输出到文件
 echo "提取的 rec_time 和 rand_foll_time 值保存到 ${OUTPUT_FILE}"
-grep -E 'honeybadgermpc_time' $FILE_PATH > $OUTPUT_FILE
+grep -E 'layer ID: 10 layer_time:' $FILE_PATH > $OUTPUT_FILE
 
 echo "完成提取。结果保存在 ${OUTPUT_FILE}"
 

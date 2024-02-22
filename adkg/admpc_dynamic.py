@@ -717,10 +717,11 @@ class ADMPC_Dynamic(ADMPC):
                 new_shares = await trans_foll.run_trans(len_values)
                 trans_foll_time = time.time() - trans_foll_time
                 print(f"layer ID: {self.layer_ID} trans_foll_time: {trans_foll_time}")
-                print(f"new_shares: {new_shares}")
+                # print(f"new_shares: {new_shares}")
 
                 # 接着，调用 robust_rec 协议重构 outputs
-                # rec_values = await self.robust_rec_step(batch_rec_list, 0)
+                rec_values = await self.robust_rec_step(new_shares, 0)
+                # print(f"rec_values: {rec_values}")
 
                 print(f"over")
 

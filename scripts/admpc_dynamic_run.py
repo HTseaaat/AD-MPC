@@ -63,7 +63,7 @@ async def _run(peers, n, t, k, my_id, start_time, layers, my_send_id, total_cm):
             # admpc_task.cancel()
             exec_time = time.time() - begin_time
             print(f"my_send_id: {my_send_id} exec_time: {exec_time}")
-            await asyncio.sleep(30)
+            await asyncio.sleep(50)
 
 
 
