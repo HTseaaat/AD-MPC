@@ -42,9 +42,9 @@ for j in $(seq 1 $containers_per_node); do
 
         # 运行 docker-compose 命令，为每个容器设置唯一的端口映射
         file_num=$(((j-1)*NODE_NUM+i-1))
-        ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.admpc_dynamic_run -d -f conf/admpc_cloud_16_11/local.$file_num.json -time 12" &
+        ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.admpc_dynamic_run -d -f conf/admpc_cloud_8_11/local.$file_num.json -time 12" &
         
-        # ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.fluid_mpc_run -d -f conf/admpc_cloud_16_12/local.$file_num.json -time 12" &
+        # ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.fluid_mpc_run -d -f conf/admpc_cloud_16_13/local.$file_num.json -time 12" &
         
         # ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.honeybadgermpc_run -d -f conf/admpc_cloud_16_1/local.$file_num.json -time 12" &
         sleep $delay_between_ssh_commands

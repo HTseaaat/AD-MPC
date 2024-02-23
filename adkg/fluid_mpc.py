@@ -16,7 +16,7 @@ from adkg.preprocessing import PreProcessedElements
 
 from adkg.mpc import TaskProgramRunner
 from adkg.robust_rec import robust_reconstruct_admpc, Robust_Rec
-from adkg.trans import Trans, Trans_Pre, Trans_Foll
+from adkg.trans import Trans, Trans_Pre, Trans_Foll, Trans_Fluid_Foll, Trans_Fluid_Pre
 from adkg.rand import Rand, Rand_Pre, Rand_Foll, Rand_Fluid_Pre, Rand_Fluid_Foll
 from adkg.aprep import APREP, APREP_Pre, APREP_Foll
 import math
@@ -470,7 +470,7 @@ class ADMPC_Dynamic(ADMPC):
     async def run_admpc(self, start_time):
         acss_start_time = time.time()
         self.public_keys = self.public_keys[self.n*self.layer_ID:self.n*self.layer_ID+self.n]
-        cm = int(self.admpc_control_instance.total_cm/(self.admpc_control_instance.layer_num-3))
+        cm = int(self.admpc_control_instance.total_cm/(self.admpc_control_instance.layer_num-4))
         w = cm + 2
         input_num = cm * 2
         print(f"cm: {cm} total_cm: {self.admpc_control_instance.total_cm}")
@@ -619,12 +619,7 @@ class ADMPC_Dynamic(ADMPC):
                 # await asyncio.sleep(30)
             else: 
                 print("over")
-        else:
-        # elif self.layer_ID == 2: 
-            # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
-            # await self.admpc_control_instance.control_signal.wait()
-            # self.admpc_control_instance.control_signal.clear()
-            # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
+        elif self.layer_ID == 2: 
             print(f"ok")
             recv_input_time = time.time()
             self.acss_tasks = [None] * self.n
@@ -640,12 +635,7 @@ class ADMPC_Dynamic(ADMPC):
                                     mpc_instance=self
                                 )
                 # 这里的 rounds 也是手动更改的
-                if self.layer_ID == 2:
-                    rounds = input_num * 2 + w
-                # elif self.layer_ID == 3: 
-                #     rounds = input_num * 2 + (w - 2) * 5 + w
-                else: 
-                    rounds = input_num * 2 + (w - 2) * 5 + w
+                rounds = input_num * 2 + w
                 self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
@@ -680,58 +670,291 @@ class ADMPC_Dynamic(ADMPC):
             print(f"layer ID: {self.layer_ID} fluid_interpolate_time: {fluid_interpolate_time}")
             # print(f"rec_shares: {rec_shares}")
 
-            if self.layer_ID < len(self.admpc_control_instance.pks_all) - 1:
-                # 这里的 execution stage 需要执行当前层的计算
-                # 需要执行的计算有：a*b, ra*b, \alpha*\beta, \alpha*c, \alpha*rc
-                input_shares = rec_shares[:input_num]
-                masked_shares = rec_shares[input_num:2*input_num]
-                if self.layer_ID == 2: 
-                    rand_shares = rec_shares[2*input_num:]
-                else: 
-                    rand_shares = rec_shares[2*input_num+5*(w-2):]
-                output_shares = [None] * cm
-                output_masked_shares = [None] * cm
-                current_rand_shares = [None] * cm
-                rand_last_layer_outputs = [None] * cm
-                rand_last_layer_masked_outputs = [None] * cm
-                for i in range(cm):
-                    output_shares[i] = input_shares[0] * input_shares[1]    # a*b
-                    output_masked_shares[i] = input_shares[0] * masked_shares[0]    # ra*b
-                    current_rand_shares[i] = rand_shares[1] * rand_shares[2]    # \alpha*\beta
-                    rand_last_layer_outputs[i] = rand_shares[2] * input_shares[0]   # \alpha*c
-                    rand_last_layer_masked_outputs[i] = rand_shares[2] * masked_shares[0]   # \alpha*rc
+            # 这里的 execution stage 需要执行当前层的计算
+            # 需要执行的计算有：a*b, ra*b, \alpha*\beta, \alpha*c, \alpha*rc
+            input_shares = rec_shares[:input_num]
+            masked_shares = rec_shares[input_num:2*input_num]
+            rand_shares = rec_shares[2*input_num:]
+            output_shares = [None] * cm
+            output_masked_shares = [None] * cm
+            current_rand_shares = [None] * cm
+            rand_last_layer_outputs = [None] * cm
+            rand_last_layer_masked_outputs = [None] * cm
+            for i in range(cm):
+                output_shares[i] = input_shares[0] * input_shares[1]    # a*b
+                output_masked_shares[i] = input_shares[0] * masked_shares[0]    # ra*b
+                current_rand_shares[i] = rand_shares[1] * rand_shares[2]    # \alpha*\beta
+                rand_last_layer_outputs[i] = rand_shares[2] * input_shares[0]   # \alpha*c
+                rand_last_layer_masked_outputs[i] = rand_shares[2] * masked_shares[0]   # \alpha*rc
+
+            # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层
+            trans_values = output_shares + output_shares + output_masked_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_last_layer_masked_outputs + rand_shares
+            acss_pre_time = time.time()
+            pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
+
+            # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+            acsstag = ADMPCMsgType.ACSS + str(self.layer_ID+1) + str(self.my_id)
+            acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+            self.acss = ACSS_Fluid_Pre(pks_next_layer, 
+                                self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                mpc_instance=self
+                            )
+            self.acss_tasks = [None] * self.n
+            # 在上一层中只需要创建一次avss即可     
+            test_value = [trans_values[0]]
+            print(f"len trans_values: {len(trans_values)}")
+            self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=trans_values))
+            await self.acss_tasks[self.my_id]
+            acss_pre_time = time.time() - acss_pre_time
+            print(f"layer ID: {self.layer_ID} acss_pre_time: {acss_pre_time}")
                 
-                # 这里是执行 u 和 v 的累加
-                # if self.layer_ID != 2: 
+            print("end")
 
-
-                # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层
-                trans_values = output_shares + output_shares + output_masked_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_last_layer_masked_outputs + rand_shares
-                acss_pre_time = time.time()
-                pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
-
-                # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
-                acsstag = ADMPCMsgType.ACSS + str(self.layer_ID+1) + str(self.my_id)
-                acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
-
-                self.acss = ACSS_Fluid_Pre(pks_next_layer, 
-                                    self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
-                                    acsssend, acssrecv, self.pc, self.ZR, self.G1, 
-                                    mpc_instance=self
-                                )
+            
+        
+        else:
+        # elif self.layer_ID == 3: 
+            # servers 在执行当前层的计算之前需要：1. 接收来自上一层的输入（这里注意区分layer=1的情况）2.接收上一层的随机数，3.接收上一层的三元组
+            # await self.admpc_control_instance.control_signal.wait()
+            # self.admpc_control_instance.control_signal.clear()
+            # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
+            if self.layer_ID + 1 == len(self.admpc_control_instance.pks_all):
+                recv_input_time = time.time()
                 self.acss_tasks = [None] * self.n
-                # 在上一层中只需要创建一次avss即可     
-                test_value = [trans_values[0]]
-                print(f"len trans_values: {len(trans_values)}")
-                self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=trans_values))
-                await self.acss_tasks[self.my_id]
-                acss_pre_time = time.time() - acss_pre_time
-                print(f"layer ID: {self.layer_ID} acss_pre_time: {acss_pre_time}")
+                for dealer_id in range(self.n): 
+                    # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+                    acsstag = ADMPCMsgType.ACSS + str(self.layer_ID) + str(dealer_id)
+                    acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+                    # 此时传递的是本层的公私钥
+                    self.acss = ACSS_Fluid_Foll(self.public_keys, self.private_key, 
+                                        self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                        acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                        mpc_instance=self
+                                    )
+                    # 这里的 rounds 也是手动更改的
+                    rounds = cm + 3
+                    self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
+
+
+                    # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
+                results = await asyncio.gather(*self.acss_tasks)
+                dealer, _, shares, commitments = zip(*results)
+                    
                 
-                print("end")
+                new_shares = []
+                for i in range(len(dealer)): 
+                    for j in range(len(shares[i]['msg'])): 
+                        new_shares.append(shares[i]['msg'][j])
+                recv_input_time = time.time() - recv_input_time
+                print(f"layer ID: {self.layer_ID} recv_input_time: {recv_input_time}")
+
+                inter_shares = [[None for i in range(self.n)] for j in range(rounds)]
+                for i in range(rounds):
+                    for j in range(self.n):
+                        inter_shares[i][j] = new_shares[i*16+j]
+
+                sc_shares = [] 
+                for i in range(len(inter_shares)): 
+                    sc_shares.append([])
+                    for j in range(len(inter_shares[0])): 
+                        sc_shares[i].append([j+1, inter_shares[i][j]])            
+                
+                rec_shares = [None] * len(inter_shares)
+                fluid_interpolate_time = time.time()
+                for i in range(len(inter_shares)): 
+                    rec_shares[i] = self.poly.interpolate_at(sc_shares[i], 0)
+                fluid_interpolate_time = time.time() - fluid_interpolate_time
+                print(f"layer ID: {self.layer_ID} fluid_interpolate_time: {fluid_interpolate_time}")
+
+                # 首先 clients 调用 trans 协议接收 shares
+                # trans_foll_time = time.time()
+                # transtag = ADMPCMsgType.TRANS + str(self.layer_ID)
+                # transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+                # trans_foll = Trans_Fluid_Foll(self.public_keys, self.private_key, 
+                #                 self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                #                 transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+                # # 这里也是假设当前 servers 知道上一层电路门输出的数量
+                # # 这里也需要手动改
+                # len_values = cm + 3
+                # print(f"len_values: {len_values}")
+                # new_shares = await trans_foll.run_trans(len_values)
+                # trans_foll_time = time.time() - trans_foll_time
+                # print(f"layer ID: {self.layer_ID} trans_foll_time: {trans_foll_time}")
+                # # print(f"new_shares: {new_shares}")
+
+                # rec_shares = [None] * len_values
+                # fluid_interpolate_time = time.time()
+                # for i in range(len_values): 
+                #     rec_shares[i] = self.poly.interpolate_at(sc_shares[i], 0)
+                # fluid_interpolate_time = time.time() - fluid_interpolate_time
+                # print(f"layer ID: {self.layer_ID} fluid_interpolate_time: {fluid_interpolate_time}")
+                # print(f"rec_shares: {rec_shares}")
+
+                print(f"over")
 
             else: 
-                print("over")
+                print(f"ok")
+                recv_input_time = time.time()
+                self.acss_tasks = [None] * self.n
+                for dealer_id in range(self.n): 
+                    # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+                    acsstag = ADMPCMsgType.ACSS + str(self.layer_ID) + str(dealer_id)
+                    acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+                    # 此时传递的是本层的公私钥
+                    self.acss = ACSS_Fluid_Foll(self.public_keys, self.private_key, 
+                                        self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                        acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                        mpc_instance=self
+                                    )
+                    # 这里的 rounds 也是手动更改的
+                    if self.layer_ID == 3:
+                        rounds = input_num * 2 + (w - 2) * 5 + w
+                    # elif self.layer_ID == 3: 
+                    #     rounds = input_num * 2 + (w - 2) * 5 + w
+                    else: 
+                        rounds = input_num * 2 + (w - 2) * 5 + w + 2
+                    self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
+
+
+                    # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
+                results = await asyncio.gather(*self.acss_tasks)
+                dealer, _, shares, commitments = zip(*results)
+                    
+                
+                new_shares = []
+                for i in range(len(dealer)): 
+                    for j in range(len(shares[i]['msg'])): 
+                        new_shares.append(shares[i]['msg'][j])
+                recv_input_time = time.time() - recv_input_time
+                print(f"layer ID: {self.layer_ID} recv_input_time: {recv_input_time}")
+
+                inter_shares = [[None for i in range(self.n)] for j in range(rounds)]
+                for i in range(rounds):
+                    for j in range(self.n):
+                        inter_shares[i][j] = new_shares[i*16+j]
+
+                sc_shares = [] 
+                for i in range(len(inter_shares)): 
+                    sc_shares.append([])
+                    for j in range(len(inter_shares[0])): 
+                        sc_shares[i].append([j+1, inter_shares[i][j]])            
+                
+                rec_shares = [None] * len(inter_shares)
+                fluid_interpolate_time = time.time()
+                for i in range(len(inter_shares)): 
+                    rec_shares[i] = self.poly.interpolate_at(sc_shares[i], 0)
+                fluid_interpolate_time = time.time() - fluid_interpolate_time
+                print(f"layer ID: {self.layer_ID} fluid_interpolate_time: {fluid_interpolate_time}")
+                # print(f"rec_shares: {rec_shares}")
+
+                if self.layer_ID < len(self.admpc_control_instance.pks_all) - 1:
+                    len_rec_shares = len(rec_shares)
+                    if self.layer_ID + 1 == len(self.admpc_control_instance.pks_all) - 1: 
+                        # 这里 servers 需要做的是将 u 和 v 累加，然后传递 u,v,r,z 到 clients
+                        z = rec_shares[:cm]
+                        if self.layer_ID == 3: 
+                            rand_shares = rec_shares[2*input_num+5*(w-2):]
+                            u = rand_shares[1]
+                            v = rand_shares[2]
+                        else: 
+                            rand_shares = rec_shares[2*input_num+5*(w-2):len_rec_shares-2]
+                            u = rec_shares[len_rec_shares-2]
+                            v = rec_shares[len_rec_shares-1]
+
+                        trans_shares = z + [rand_shares[0]] + [u] + [v]
+                        print(f"len trans shares: {len(trans_shares)}")
+
+                        print(f"before trans")
+                        acss_pre_time = time.time()
+                        pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
+
+                        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+                        acsstag = ADMPCMsgType.ACSS + str(self.layer_ID+1) + str(self.my_id)
+                        acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+                        self.acss = ACSS_Fluid_Pre(pks_next_layer, 
+                                            self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                            acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                            mpc_instance=self
+                                        )
+                        self.acss_tasks = [None] * self.n
+                        # 在上一层中只需要创建一次avss即可     
+                        self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=trans_shares))
+                        await self.acss_tasks[self.my_id]
+                        acss_pre_time = time.time() - acss_pre_time
+                        print(f"layer ID: {self.layer_ID} acss_pre_time: {acss_pre_time}")
+                        # rans_pre_time = time.time()
+                        # transtag = ADMPCMsgType.TRANS + str(self.layer_ID+1)
+                        # transsend, transrecv = self.get_send(transtag), self.subscribe_recv(transtag)
+
+                        # trans_pre = Trans_Fluid_Pre(self.public_keys, self.private_key, 
+                        #                 self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                        #                 transsend, transrecv, self.pc, self.curve_params, mpc_instance=self)
+                        # trans_pre_task = asyncio.create_task(trans_pre.run_trans(trans_shares))
+                        
+                        # trans_pre_time = time.time() - trans_pre_time
+                        # print(f"layer ID: {self.layer_ID} trans_pre_time: {trans_pre_time}")
+                    
+                    else: 
+
+                        # 这里的 execution stage 需要执行当前层的计算
+                        # 需要执行的计算有：a*b, ra*b, \alpha*\beta, \alpha*c, \alpha*rc
+                        input_shares = rec_shares[:input_num]
+                        masked_shares = rec_shares[input_num:2*input_num]
+                        if self.layer_ID == 3: 
+                            rand_shares = rec_shares[2*input_num+5*(w-2):]
+                            u = rand_shares[1]
+                            v = rand_shares[2]
+                        else: 
+                            rand_shares = rec_shares[2*input_num+5*(w-2):len_rec_shares-2]
+                            u = rec_shares[len_rec_shares-2]
+                            v = rec_shares[len_rec_shares-1]
+
+                        output_shares = [None] * cm
+                        output_masked_shares = [None] * cm
+                        current_rand_shares = [None] * cm
+                        rand_last_layer_outputs = [None] * cm
+                        rand_last_layer_masked_outputs = [None] * cm
+
+                        for i in range(cm):
+                            output_shares[i] = input_shares[0] * input_shares[1]    # a*b
+                            output_masked_shares[i] = input_shares[0] * masked_shares[0]    # ra*b
+                            current_rand_shares[i] = rand_shares[1] * rand_shares[2]    # \alpha*\beta
+                            rand_last_layer_outputs[i] = rand_shares[2] * input_shares[0]   # \alpha*c
+                            rand_last_layer_masked_outputs[i] = rand_shares[2] * masked_shares[0]   # \alpha*rc
+                        
+                        # 这里是执行 u 和 v 的累加
+                        # if self.layer_ID != 2: 
+
+
+                        # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层
+                        trans_values = output_shares + output_shares + output_masked_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_last_layer_masked_outputs + rand_shares + [u] + [v]
+                        acss_pre_time = time.time()
+                        pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
+
+                        # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
+                        acsstag = ADMPCMsgType.ACSS + str(self.layer_ID+1) + str(self.my_id)
+                        acsssend, acssrecv = self.get_send(acsstag), self.subscribe_recv(acsstag)
+
+                        self.acss = ACSS_Fluid_Pre(pks_next_layer, 
+                                            self.g, self.h, self.n, self.t, self.deg, self.sc, self.my_id, 
+                                            acsssend, acssrecv, self.pc, self.ZR, self.G1, 
+                                            mpc_instance=self
+                                        )
+                        self.acss_tasks = [None] * self.n
+                        # 在上一层中只需要创建一次avss即可     
+                        print(f"len trans_values: {len(trans_values)}")
+                        self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=trans_values))
+                        await self.acss_tasks[self.my_id]
+                        acss_pre_time = time.time() - acss_pre_time
+                        print(f"layer ID: {self.layer_ID} acss_pre_time: {acss_pre_time}")
+                        
+                        print("end")
 
         layer_time = time.time() - layer_time
         print(f"layer ID: {self.layer_ID} layer_time: {layer_time}")

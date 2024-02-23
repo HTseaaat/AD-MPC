@@ -1202,6 +1202,7 @@ class Trans_Fluid_Pre(Trans):
         for i in range(self.n): 
             member_list.append(self.n * (self.mpc_instance.layer_ID + 1) + i)
         
+        print(f"before predicate")
         async def predicate(_m):
             return True
 
@@ -1209,6 +1210,7 @@ class Trans_Fluid_Pre(Trans):
         rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
 
         rbc_input = rbc_masked_input
+        print(f"before rbc_dynamic")
         asyncio.create_task(
             optqrbc_dynamic(
                 rbctag,
@@ -1225,42 +1227,18 @@ class Trans_Fluid_Pre(Trans):
             )
         )
     
-    async def run_trans(self, values, rand_values):     
-        # 改变一下策略，让每个参与方一次性 acss rounds 个随机数
-        # rounds = 1
-        # self.rand_num = rounds
-        # values = [self.ZR.rand() for _ in range(rounds)]
-        # self.acss_task = asyncio.create_task(self.acss_step(values))
+    async def run_trans(self, values):     
 
-        # 这里模拟的是 step 1
-        rand_values_hat = [None] * len(values)
-        values_hat = [None] * len(values)
-        for i in range(len(values)): 
-            values_hat[i] = self.ZR.rand()
-            rand_values_hat[i] = self.ZR.rand()
-
-        # 这里是协议 step 2 和 3
-        masked_values, masked_values_hat = [None] * len(values), [None] * len(values)
-        c = [None] * len(values)
-        for i in range(len(values)): 
-            masked_values[i] = values[i] + rand_values[i]
-            masked_values_hat[i] = values_hat[i] + rand_values_hat[i]
-            c[i] = self.pc.commit_trans(rand_values[i], rand_values_hat[i])
         
         # 这里是协议 step 4
         # 我们需要先执行 rbc ，再在 acss 过程中去验证我们的 masked values 的值是否是正确的，这里我们需要一个 signal 来先让acss 协程等待 rbc 结束
         # rbc_masked_signal = asyncio.Event()
         sr = Serial(self.G1)
-        serialized_masked_values = sr.serialize_fs(masked_values)
-        serialized_masked_values_hat = sr.serialize_fs(masked_values_hat)
-        serialized_c = sr.serialize_gs(c)
-        rbc_masked_input = serialized_masked_values + serialized_masked_values_hat + serialized_c
-        rbc_masked_task = asyncio.create_task(self.rbc_masked_step_pre(bytes(rbc_masked_input)))
+        serialized_values = sr.serialize_fs(values)
+        print(f"befor rbc pre")
+        rbc_masked_task = asyncio.create_task(self.rbc_masked_step_pre(bytes(serialized_values)))
 
-        # 这里是协议 step 5
-        # 这里 我们把要传入的参数放到一个集合中再传入 acss
-        trans_values = (values, values_hat)
-        self.acss_task = asyncio.create_task(self.acss_step(trans_values))
+        
 
 class Trans_Fluid_Foll(Trans):        
     def __init__(self, public_keys, private_key, g, h, n, t, deg, my_id, send, recv, pc, curve_params, mpc_instance):
@@ -1648,6 +1626,7 @@ class Trans_Fluid_Foll(Trans):
         async def predicate(_m):
             return True
 
+        print(f"before setup")
         async def _setup(dealer_id):
             # 注意！dealer_id 这里要改一下
             # dealer_id = (self.mpc_instance.layer_ID - 1) * self.n + i
@@ -1706,24 +1685,6 @@ class Trans_Fluid_Foll(Trans):
         trans_rbc_time = time.time() - trans_rbc_time
         print(f"trans_rbc_time: {trans_rbc_time}")
         
-        # # 这里是协议 step 4
-        # # 我们需要先执行 rbc ，再在 acss 过程中去验证我们的 masked values 的值是否是正确的，这里我们需要一个 signal 来先让acss 协程等待 rbc 结束
-        # trans_rbc_time = time.time()
-        # await asyncio.create_task(self.rbc_masked_step_foll())
-        # trans_rbc_time = time.time() - trans_rbc_time
-        # print(f"trans_rbc_time: {trans_rbc_time}")
-
-        # 这里是协议 step 5
-        # 这里我们直接让 acss return 了，并没有用到他们设计的 异步队列 的 get，后续可能要修改
-        trans_acss_time = time.time()
-        acss_signal = asyncio.Event()
-        self.acss_task = asyncio.create_task(self.acss_step(len_values))
-        acss_outputs = await self.acss_task
-        trans_acss_time = time.time() - trans_acss_time
-        print(f"trans_acss_time: {trans_acss_time}")
-        
-        # # 这里对应协议的 step 6，这里的 LT 就对应论文中的 LT
-        LT = list(acss_outputs.keys())
 
         # 这里对应协议的 step 7， GT 对应论文中的 GT
         # de_masked_values = [[self.ZR(0) for _ in range(len(values))] for _ in range(self.n)]
@@ -1731,42 +1692,10 @@ class Trans_Fluid_Foll(Trans):
         de_masked_values = [[self.ZR(0) for _ in range(self.n)] for _ in range(len_values)]
         for i in range(len_values): 
             for j in range(self.n): 
-                if j in LT: 
-                    de_masked_values[i][j] = int(sr.deserialize_f(self.rbcl_list[j][32*i:32*(i+1)]))
+                de_masked_values[i][j] = int(sr.deserialize_f(self.rbcl_list[j][32*i:32*(i+1)]))
 
-        GFEG1 = GF(Subgroup.BLS12_381)
-        point = EvalPoint(GFEG1, self.n, use_omega_powers=False)
-        poly, err = [None] * len_values, [None] * len_values
-        for i in range(len_values): 
-            poly[i], err[i] = await robust_reconstruct_admpc(de_masked_values[i], LT, GFEG1, self.t, point, self.t)
-            # err_list[i] = list(err[i])
-            # GT[i] = [j for j in range(self.n) if j not in err_list[i]]
+        
 
-        err_list = [list(err[i]) for i in range(len(err))]
-
-        # 这个就是通过鲁棒性插值找到的 2t+1 的集合
-        for i in range(len(err_list)): 
-            if len(err_list[i]) == 0: 
-                continue
-            else: 
-                for j in range(len(err_list[i])): 
-                    LT.pop(err_list[i][j])
-        GT = LT
-
-
-        # 这一步是 MVBA 的过程
-        # 这里是协议的 step 7 和 8
-        trans_mvba_time = time.time()
-        create_acs_task = asyncio.create_task(self.agreement(GT, de_masked_values, acss_outputs, acss_signal))
-
-        acs, key_task, work_tasks = await create_acs_task
-        await acs
-        output = await key_task
-        await asyncio.gather(*work_tasks)
-        new_shares = output
-        trans_mvba_time = time.time() - trans_mvba_time
-        print(f"trans_mvba_time: {trans_mvba_time}")
-
-        return new_shares
+        return de_masked_values
 
   

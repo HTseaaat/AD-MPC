@@ -225,6 +225,9 @@ class ADMPC:
         for i in range(layers): 
             gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
 
+        # 这里是调用 robust_rec 来重构输出
+        output_values = await self.robust_rec_step(gate_outputs, 0)
+
         admpc_time = time.time() - start_time
         print(f"honeybadgermpc_time: {admpc_time}")
         # logging.info(f"admpc finished! n: {self.n} Node {self.my_id}, tape_num: {tape_num} step1_time: {step1_time}, w: {w} step2_time: {step2_time}, cm: {cm} step3_time: {step3_time}, step4_time: {step4_time} time: {admpc_time}")

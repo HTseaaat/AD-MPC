@@ -13,9 +13,11 @@ if [ ! -f "$EXTRACTED_VALUES_FILE" ]; then
 fi
 
 # 使用awk提取rand_foll_time的值，计算总和和数量，最后计算平均值
-awk '/acss_pre_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE > $AVERAGE_FILE
-awk '/recv_input_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE > $AVERAGE_FILE
-awk '/trans_foll_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE > $AVERAGE_FILE
+awk '/acss_pre_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE >> $AVERAGE_FILE
+
+awk '/recv_input_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE >> $AVERAGE_FILE
+
+awk '/trans_foll_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE >> $AVERAGE_FILE
 
 
 awk '/rand_foll_time:/ {sum += $NF; count++} END {if (count > 0) print sum / count}' $EXTRACTED_VALUES_FILE >> $AVERAGE_FILE
