@@ -553,7 +553,6 @@ class Robust_Rec:
     
     # 这个用作在同一个委员会中重构用的
     async def batch_robust_rec(self, rec_id, shares):
-        print(f"this is batch_robust_rec")
         # self.rec_id = rec_id
         self.global_num += 1
 
@@ -606,11 +605,9 @@ class Robust_Rec:
 
             # await rbc_task
 
-        print(f"before setup")
         await asyncio.gather(*[_setup(j) for j in range(self.n)])
 
         rbc_list = await asyncio.gather(*(rbc_outputs[j].get() for j in range(self.n)))  
-        print(f"after setup")
 
         # 首先，对整个 rbc_list 进行一次反序列化
         deserialized_rbc_list = [sr.deserialize_fs(item) for item in rbc_list]
@@ -649,13 +646,11 @@ class Robust_Rec:
         
 
         # 这一步是 MVBA 的过程
-        print(f"before rec mvba")
         create_acs_task = asyncio.create_task(self.agreement_honeybadgermpc(key_proposal, rbc_shares, rec_id))
         acs, key_task, work_tasks = await create_acs_task
         await acs
         output = await key_task
         await asyncio.gather(*work_tasks)
-        print(f"after rec mvba")
         
         mks, rec_values = output
         # print(f"my id: {self.my_id} rec_value: {rec_values}")

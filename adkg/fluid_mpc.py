@@ -654,7 +654,7 @@ class ADMPC_Dynamic(ADMPC):
             inter_shares = [[None for i in range(self.n)] for j in range(rounds)]
             for i in range(rounds):
                 for j in range(self.n):
-                    inter_shares[i][j] = new_shares[i*16+j]
+                    inter_shares[i][j] = new_shares[i*self.n+j]
 
             sc_shares = [] 
             for i in range(len(inter_shares)): 
@@ -754,7 +754,7 @@ class ADMPC_Dynamic(ADMPC):
                 inter_shares = [[None for i in range(self.n)] for j in range(rounds)]
                 for i in range(rounds):
                     for j in range(self.n):
-                        inter_shares[i][j] = new_shares[i*16+j]
+                        inter_shares[i][j] = new_shares[i*self.n+j]
 
                 sc_shares = [] 
                 for i in range(len(inter_shares)): 
@@ -836,7 +836,7 @@ class ADMPC_Dynamic(ADMPC):
                 inter_shares = [[None for i in range(self.n)] for j in range(rounds)]
                 for i in range(rounds):
                     for j in range(self.n):
-                        inter_shares[i][j] = new_shares[i*16+j]
+                        inter_shares[i][j] = new_shares[i*self.n+j]
 
                 sc_shares = [] 
                 for i in range(len(inter_shares)): 

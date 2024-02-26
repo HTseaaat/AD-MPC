@@ -146,7 +146,6 @@ class ADMPC:
 
     
     async def run_computation(self, inputs, gate_tape, mult_triples):
-        print(f"enter run computation")
         print(f"len inputs: {len(inputs)} len gate_tape: {len(gate_tape)} len mult: {len(mult_triples)}")
         
         self.gates_num = len(gate_tape)
@@ -156,7 +155,6 @@ class ADMPC:
             for j in range(2): 
                 gate_input_values[i][j] = inputs[j]
         # 输出存在这里
-        print(f"after gate_input_values")
         gate_output_values = [None] * self.gates_num
         # 这两个用来记录当前层的乘法门位置和数量，用来做当前层乘法门的批处理
         batch_mult_gates, mult_pos = [], []
@@ -171,9 +169,7 @@ class ADMPC:
                 mult_pos.append(i)
                 # gate_output_values[i] = await self.mult(gate_input_values[i], mult_triples[triple_num])
                 # triple_num += 1
-        print(f"before mult")
         batch_mult_outputs = await self.mult(batch_mult_gates, mult_triples)
-        print(f"after mult")
         for i in range(len(mult_pos)): 
             gate_output_values[mult_pos[i]] = batch_mult_outputs[i]
 
@@ -212,14 +208,12 @@ class ADMPC:
         rand = Rand(self.public_keys, self.private_key, self.g, self.h, self.n, self.t, self.deg, self.my_id, randsend, randrecv, self.pc, self.curve_params, self.matrix)
         new_shares = await rand.run_rand(w, rounds)
         step2_time = time.time() - step2_start_time
-        print(f"after rand")
         print(f"new_shares: {new_shares}")
        
         # 这里是 execution stage 的 step 1，执行当前层的计算
         gate_tape = []
         for i in range(cm): 
             gate_tape.append(1)
-        print(f"before run computation")
         
         # 这里根据电路层数，执行每层的计算
         for i in range(layers): 
