@@ -1,4 +1,4 @@
-from adkg.polynomial import polynomials_over
+from adkg.polynomial import polynomials_over, EvalPoint
 from adkg.utils.poly_misc import interpolate_g1_at_x
 from adkg.utils.misc import wrap_send, subscribe_recv
 import asyncio
@@ -10,7 +10,7 @@ from adkg.acss import ACSS, ACSS_Foll, ACSS_Pre, ACSS_Fluid_Pre, ACSS_Fluid_Foll
 from adkg.router import SimpleRouter
 
 from adkg.broadcast.tylerba import tylerba
-from adkg.broadcast.optqrbc import optqrbc
+from adkg.broadcast.optqrbc import optqrbc, optqrbc_dynamic
 
 from adkg.preprocessing import PreProcessedElements
 
@@ -21,6 +21,11 @@ from adkg.rand import Rand, Rand_Pre, Rand_Foll, Rand_Fluid_Pre, Rand_Fluid_Foll
 from adkg.aprep import APREP, APREP_Pre, APREP_Foll
 import math
 
+from adkg.utils.serilization import Serial
+from adkg.field import GF, GFElement
+from adkg.elliptic_curve import Subgroup
+
+import random
 import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.NOTSET)
@@ -467,22 +472,221 @@ class ADMPC_Dynamic(ADMPC):
         # return gate_output_values
     
     
+    async def commonsubset(self, rbc_out, rbc_signal, rbc_values, coin_keys, aba_in, aba_out):
+        assert len(rbc_out) == self.n
+        assert len(aba_in) == self.n
+        assert len(aba_out) == self.n
+
+        aba_inputted = [False]*self.n
+        aba_values = [0]*self.n
+
+        async def _recv_rbc(j):
+            # rbc_values[j] = await rbc_out[j]
+            rbcl = await rbc_out[j].get()
+            # print(f"rbcl: {rbcl}")
+            rbcb = Bitmap(self.n, rbcl)
+            # print(f"rbcb: {rbcb}")
+            rbc_values[j] = []
+            # for i in range(self.n): 
+            #     print(f"{self.my_id} receives {i} {rbcb.get_bit(i)}")
+            for i in range(self.n):
+                if rbcb.get_bit(i):
+                    rbc_values[j].append(i)
+            # print(f"rbc_values[{j}]: {rbc_values[j]}")        
+            
+            if not aba_inputted[j]:
+                aba_inputted[j] = True
+                aba_in[j](1)
+            
+            subset = True
+            # while True:
+            #     acss_signal.clear()
+            #     for k in rbc_values[j]:
+            #         if k not in acss_outputs.keys():
+            #             subset = False
+            #     if subset:
+            #         coin_keys[j]((acss_outputs, rbc_values[j]))
+            #         return
+            #     await acss_signal.wait()
+
+        r_threads = [asyncio.create_task(_recv_rbc(j)) for j in range(self.n)]
+
+        async def _recv_aba(j):
+            aba_values[j] = await aba_out[j]()  # May block
+
+            if sum(aba_values) >= 1:
+                # Provide 0 to all other aba
+                for k in range(self.n):
+                    if not aba_inputted[k]:
+                        aba_inputted[k] = True
+                        aba_in[k](0)
+        
+        await asyncio.gather(*[asyncio.create_task(_recv_aba(j)) for j in range(self.n)])
+        # assert sum(aba_values) >= self.n - self.t  # Must have at least N-f committed
+        assert sum(aba_values) >= 1  # Must have at least N-f committed
+
+        # Wait for the corresponding broadcasts
+        for j in range(self.n):
+            if aba_values[j]:
+                await r_threads[j]
+                assert rbc_values[j] is not None
+            else:
+                r_threads[j].cancel()
+                rbc_values[j] = None
+
+        rbc_signal.set()
+    
+    async def agreement(self, key_proposal):
+        
+        aba_inputs = [asyncio.Queue() for _ in range(self.n)]
+        aba_outputs = [asyncio.Queue() for _ in range(self.n)]
+        rbc_outputs = [asyncio.Queue() for _ in range(self.n)]
+        
+        coin_keys = [asyncio.Queue() for _ in range(self.n)]
+
+        member_list = []
+        for i in range(self.n): 
+            member_list.append(self.n * (self.layer_ID) + i)
+
+        async def predicate(_key_proposal):
+            kp = Bitmap(self.n, _key_proposal)
+            kpl = []
+            for ii in range(self.n):
+                if kp.get_bit(ii):
+                    kpl.append(ii)
+            # print(f"kpl: {kpl}")
+            # print(f"de_masked_value: {de_masked_value}")
+            if len(kpl) <= self.t:
+                return False
+            
+            
+            return True
+
+        async def _setup(j):
+            
+            # starting RBC
+            rbctag = ADMPCMsgType.RBC + str(j) # (R, msg)
+            # rbctag = TRANSMsgType.RBC + str(j)
+            rbcsend, rbcrecv = self.get_send(rbctag), self.subscribe_recv(rbctag)
+
+            rbc_input = None
+            if j == self.my_id: 
+                # print(f"key_proposal: {key_proposal}")
+                riv = Bitmap(self.n)
+                for k in key_proposal: 
+                    riv.set_bit(k)
+                rbc_input = bytes(riv.array)
+
+            # rbc_outputs[j] = 
+            asyncio.create_task(
+                optqrbc_dynamic(
+                    rbctag,
+                    self.my_id,
+                    self.n,
+                    self.t,
+                    j,
+                    predicate,
+                    rbc_input,
+                    rbc_outputs[j].put_nowait,
+                    rbcsend,
+                    rbcrecv,
+                    member_list
+                )
+            )
+
+            abatag = ADMPCMsgType.ABA + str(j) # (B, msg)
+            # abatag = TRANSMsgType.ABA + str(j)
+            # abatag = j # (B, msg)
+            abasend, abarecv =  self.get_send(abatag), self.subscribe_recv(abatag)
+
+            def bcast(o):
+                for i in range(len(member_list)):
+                    abasend(member_list[i], o)
+                
+            aba_task = asyncio.create_task(
+                tylerba(
+                    abatag,
+                    self.my_id,
+                    self.n,
+                    self.t,
+                    coin_keys[j].get,
+                    aba_inputs[j].get,
+                    aba_outputs[j].put_nowait,
+                    bcast,
+                    abarecv,
+                )
+            )
+            return aba_task
+
+        work_tasks = await asyncio.gather(*[_setup(j) for j in range(self.n)])
+        
+        rbc_signal = asyncio.Event()
+        rbc_values = [None for i in range(self.n)]
+
+        return (
+            self.commonsubset(
+                rbc_outputs,
+                rbc_signal,
+                rbc_values,
+                [_.put_nowait for _ in coin_keys],
+                [_.put_nowait for _ in aba_inputs],
+                [_.get for _ in aba_outputs],
+            ),
+            self.new_subset(
+                rbc_values,
+                rbc_signal,
+                
+            ),
+            work_tasks,
+        )
+
+    async def new_subset(self, rbc_values, rbc_signal):
+        await rbc_signal.wait()
+        rbc_signal.clear()
+
+        # 这一步是将所有 rbc_values 转化成一个公共子集 mks
+        # print(f"rbc_values: {rbc_values}")
+        self.mks = set() # master key set
+        for ks in  rbc_values:
+            if ks is not None:
+                self.mks = self.mks.union(set(list(ks)))
+                if len(self.mks) >= self.n-self.t:
+                    break
+
+        mks_list = sorted(self.mks)
+        
+
+        return mks_list
+
+    # async def masked_values(): 
+    
+    
     async def run_admpc(self, start_time):
         acss_start_time = time.time()
         self.public_keys = self.public_keys[self.n*self.layer_ID:self.n*self.layer_ID+self.n]
         cm = int(self.admpc_control_instance.total_cm/(self.admpc_control_instance.layer_num-4))
-        w = cm + 2
-        input_num = cm * 2
+        # 这里电路宽度还是 cm * 2，额外多的两个 MAC check的单独加
+        w = cm * 2
+        # 这里 input_num 指的是除了要计算原始电路以外，还要计算带 MAC 的电路，rz1+rz2
+        input_num = w * 2
         print(f"cm: {cm} total_cm: {self.admpc_control_instance.total_cm}")
 
+        # 这里测试每个 committee 中的 my_id = 9 的节点是拜占庭节点，他不发送消息
+        # if self.my_id != 9: 
         # 计算每层的时间
         layer_time = time.time()
 
         # 我们假设 layer_ID = 0 时是 clients 提供输入给 servers
         if self.layer_ID == 0:
 
-            # clients step 1 传递输入给下一层
-            clients_inputs = [self.ZR.rand()]
+            # 客户端的输入的 values 数目要等于 2 * w
+            inputs_num = int((2*(w))/self.n) + 1
+            clients_inputs = []
+            for i in range(inputs_num):
+                clients_inputs.append(self.ZR.rand())
+            
+            # # clients step 1 传递输入给下一层
+            # clients_inputs = [self.ZR.rand()]
 
             # 此处传递的公钥应该是下一层的公钥
             acss_pre_time = time.time()
@@ -506,9 +710,11 @@ class ADMPC_Dynamic(ADMPC):
 
             # clients step 2 调用 Rand 协议传递随机数给下一层
             # w 是需要生成的随机数的数量
+            # 由于 Fluid MPC 的特性，要再加个2
             rand_pre_time = time.time()
-            if w > self.n - self.t: 
-                rounds = math.ceil(w / (self.n - self.t))
+            mac_keys = w + 2
+            if mac_keys > self.n - self.t: 
+                rounds = math.ceil(mac_keys / (self.n - self.t))
             else: 
                 rounds = 1
 
@@ -518,7 +724,7 @@ class ADMPC_Dynamic(ADMPC):
             rand_pre = Rand_Fluid_Pre(self.public_keys, self.private_key, 
                                 self.g, self.h, self.n, self.t, self.deg, self.my_id, 
                                 randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
-            rand_pre_task = asyncio.create_task(rand_pre.run_rand(w, rounds))
+            rand_pre_task = asyncio.create_task(rand_pre.run_rand(mac_keys, rounds))
             await rand_pre_task
             rand_pre_time = time.time() - rand_pre_time
             print(f"layer ID: {self.layer_ID} rand_pre_time: {rand_pre_time}")
@@ -534,6 +740,7 @@ class ADMPC_Dynamic(ADMPC):
             # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
             recv_input_time = time.time()
             self.acss_tasks = [None] * self.n
+            # for dealer_id in range(self.n - 1, -1, -1): 
             for dealer_id in range(self.n): 
                 # 这里 ADKGMsgType.ACSS 都是 acss 有可能会和接下来的 trans 协议冲突
                 acsstag = ADMPCMsgType.ACSS + str(self.layer_ID) + str(dealer_id)
@@ -546,14 +753,39 @@ class ADMPC_Dynamic(ADMPC):
                                     mpc_instance=self
                                 )
                 # 这里的 rounds 也是手动更改的
-                rounds = 1
+                rounds = 13
                 self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
                 # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
-            results = await asyncio.gather(*self.acss_tasks)
-            dealer, _, shares, commitments = zip(*results)
+            # results = await asyncio.gather(*self.acss_tasks)
+            # for result in results: 
+            #     (dealer, _, shares, commitments) = result
+            #     print(f"in for layer ID: {self.layer_ID} my id: {self.my_id} dealer: {dealer}")
+            # dealer, _, shares, commitments = zip(*results)
+            # print(f"layer ID: {self.layer_ID} my id: {self.my_id} dealer: {dealer}")
                 
+            done, pending = await asyncio.wait(self.acss_tasks, return_when=asyncio.ALL_COMPLETED)
+    
+            # 从完成的任务中收集结果
+            results = [task.result() for task in done]
+            dealer, _, shares, commitments = zip(*results)
+            print(f"layer ID: {self.layer_ID} my id: {self.my_id} dealers: {dealer}")
+                
+            # 这里增加的代码是改进的 Fluid MPC 的代码，增加了MVBA 的过程，来共识一个公共子集
+            # 这一步是 MVBA 的过程
+            fluid_mvba_time = time.time()
+            key_proposal = []
+            # for i in range(self.n - self.t): key_proposal.append(dealer[i])
+            key_proposal = random.sample(dealer, self.n - self.t)  # 从dealer随机选择n-t个不重复的元素
+            create_acs_task = asyncio.create_task(self.agreement(key_proposal))
+
+            acs, key_task, work_tasks = await create_acs_task
+            await acs
+            subset = await key_task
+            await asyncio.gather(*work_tasks)
+            fluid_mvba_time = time.time() - fluid_mvba_time
+            print(f"fluid_mvba_time: {fluid_mvba_time} layer ID: {self.layer_ID} my id: {self.my_id} common_subset: {subset}")
             
             new_shares = []
             for i in range(len(dealer)): 
@@ -568,18 +800,20 @@ class ADMPC_Dynamic(ADMPC):
             randtag = ADMPCMsgType.GENRAND + str(self.layer_ID)
             randsend, randrecv = self.get_send(randtag), self.subscribe_recv(randtag)
             rand_foll = Rand_Fluid_Foll(self.public_keys, self.private_key, 
-                                  self.g, self.h, self.n, self.t, self.deg, self.my_id, 
-                                  randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
+                                self.g, self.h, self.n, self.t, self.deg, self.my_id, 
+                                randsend, randrecv, self.pc, self.curve_params, self.matrix, mpc_instance=self)
             # 这里我们假设当前层的 servers 知道需要生成多少个随机数，在这里就直接设置，这里也是手动改得
             # w = int(len(new_shares)/2)
-            if w > self.n - self.t: 
-                rounds = math.ceil(w / (self.n - self.t))
+            # 这里接收的是 Fluid MPC 的 MAC keys 
+            mac_keys = w + 2
+            if mac_keys > self.n - self.t: 
+                rounds = math.ceil(mac_keys / (self.n - self.t))
             else: 
                 rounds = 1
             # w, rounds = 2, 1           
-            rand_shares = await rand_foll.run_rand(w, rounds)
+            rand_shares = await rand_foll.run_rand(mac_keys, rounds)
             rand_foll_time = time.time() - rand_foll_time
-            print(f"layer ID: {self.layer_ID} rand_foll_time: {rand_foll_time}")
+            print(f"layer ID: {self.layer_ID} rand_foll_time: {rand_foll_time} len rand_shares: {len(rand_shares)} len new_shares: {len(new_shares)}")
             
             
             # 这里的 execution stage 需要将输入乘以一个随机数 r
@@ -588,11 +822,12 @@ class ADMPC_Dynamic(ADMPC):
             for i in range(input_num):
                 masked_shares[i] = new_shares[0] * rand_shares[0]
                 input_shares[i] = new_shares[0]
-            
+            print(f"here?")
 
             if self.layer_ID + 1 < len(self.admpc_control_instance.pks_all):
             # if self.admpc_control_instance.pks_all[self.layer_ID + 1] is not None: 
                 # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层
+                print(f"enter if")
                 trans_values = input_shares + masked_shares + rand_shares
                 acss_pre_time = time.time()
                 pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
@@ -608,10 +843,13 @@ class ADMPC_Dynamic(ADMPC):
                                 )
                 self.acss_tasks = [None] * self.n
                 # 在上一层中只需要创建一次avss即可     
-                test_value = [trans_values[0]]
+                # test_value = [trans_values[0]]
                 print(f"len trans_values: {len(trans_values)}")
+                
                 self.acss_tasks[self.my_id] = asyncio.create_task(self.acss.avss(0, values=trans_values))
+
                 await self.acss_tasks[self.my_id]
+                
                 acss_pre_time = time.time() - acss_pre_time
                 print(f"layer ID: {self.layer_ID} acss_pre_time: {acss_pre_time}")
                 
@@ -635,14 +873,36 @@ class ADMPC_Dynamic(ADMPC):
                                     mpc_instance=self
                                 )
                 # 这里的 rounds 也是手动更改的
-                rounds = input_num * 2 + w
+                # 在这一层，layer = 2，接收到的 shares 的数目组成分为以下几块，原始输入 + 乘以r的masked_values + 随机数(w+2)
+                rounds = input_num * 2 + w + 2
                 self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
                 # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
-            results = await asyncio.gather(*self.acss_tasks)
+            done, pending = await asyncio.wait(self.acss_tasks, return_when=asyncio.ALL_COMPLETED)
+    
+                                                   
+    
+            # # 从完成的任务中收集结果
+            results = [task.result() for task in done]
             dealer, _, shares, commitments = zip(*results)
-                
+            print(f"layer ID: {self.layer_ID} my id: {self.my_id} dealers: {dealer}")
+
+
+            # 这里增加的代码是改进的 Fluid MPC 的代码，增加了MVBA 的过程，来共识一个公共子集
+            # 这一步是 MVBA 的过程
+            fluid_mvba_time = time.time()
+            key_proposal = []
+            # for i in range(self.n - self.t): key_proposal.append(dealer[i])
+            key_proposal = random.sample(dealer, self.n - self.t)  # 从dealer随机选择n-t个不重复的元素
+            create_acs_task = asyncio.create_task(self.agreement(key_proposal))
+
+            acs, key_task, work_tasks = await create_acs_task
+            await acs
+            subset = await key_task
+            await asyncio.gather(*work_tasks)
+            fluid_mvba_time = time.time() - fluid_mvba_time
+            print(f"fluid_mvba_time: {fluid_mvba_time} layer ID: {self.layer_ID} my id: {self.my_id} common_subset: {subset}")
             
             new_shares = []
             for i in range(len(dealer)): 
@@ -651,6 +911,7 @@ class ADMPC_Dynamic(ADMPC):
             recv_input_time = time.time() - recv_input_time
             print(f"layer ID: {self.layer_ID} recv_input_time: {recv_input_time}")
 
+            # 这一步骤模拟的是 下一层委员会在接收到 shares 在执行 插值
             inter_shares = [[None for i in range(self.n)] for j in range(rounds)]
             for i in range(rounds):
                 for j in range(self.n):
@@ -675,20 +936,23 @@ class ADMPC_Dynamic(ADMPC):
             input_shares = rec_shares[:input_num]
             masked_shares = rec_shares[input_num:2*input_num]
             rand_shares = rec_shares[2*input_num:]
-            output_shares = [None] * cm
-            output_masked_shares = [None] * cm
-            current_rand_shares = [None] * cm
-            rand_last_layer_outputs = [None] * cm
-            rand_last_layer_masked_outputs = [None] * cm
-            for i in range(cm):
+            output_shares = [None] * w
+            output_masked_shares = [None] * w
+            current_rand_shares = [None] * w
+            rand_last_layer_outputs = [None] * w
+            rand_last_layer_masked_outputs = [None] * w
+            for i in range(w):
                 output_shares[i] = input_shares[0] * input_shares[1]    # a*b
                 output_masked_shares[i] = input_shares[0] * masked_shares[0]    # ra*b
                 current_rand_shares[i] = rand_shares[1] * rand_shares[2]    # \alpha*\beta
                 rand_last_layer_outputs[i] = rand_shares[2] * input_shares[0]   # \alpha*c
                 rand_last_layer_masked_outputs[i] = rand_shares[2] * masked_shares[0]   # \alpha*rc
 
-            # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层
-            trans_values = output_shares + output_shares + output_masked_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_last_layer_masked_outputs + rand_shares
+            # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层 6 * w + 2
+            # trans_values = output_shares + output_shares + output_masked_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_last_layer_masked_outputs + rand_shares
+            
+            trans_values = output_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_shares
+            
             acss_pre_time = time.time()
             pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
 
@@ -712,7 +976,6 @@ class ADMPC_Dynamic(ADMPC):
                 
             print("end")
 
-            
         
         else:
         # elif self.layer_ID == 3: 
@@ -720,6 +983,7 @@ class ADMPC_Dynamic(ADMPC):
             # await self.admpc_control_instance.control_signal.wait()
             # self.admpc_control_instance.control_signal.clear()
             # 这是 step 1 接收上一层的输出（这里注意区分layer=1的情况）
+            # 这个 if 表示的是client 接收shares 并重构最后的输出
             if self.layer_ID + 1 == len(self.admpc_control_instance.pks_all):
                 recv_input_time = time.time()
                 self.acss_tasks = [None] * self.n
@@ -735,14 +999,33 @@ class ADMPC_Dynamic(ADMPC):
                                         mpc_instance=self
                                     )
                     # 这里的 rounds 也是手动更改的
-                    rounds = cm + 3
+                    rounds = w + 3
+                    # rounds = 6 * w + 2
                     self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
                     # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
-                results = await asyncio.gather(*self.acss_tasks)
+                done, pending = await asyncio.wait(self.acss_tasks, return_when=asyncio.ALL_COMPLETED)
+    
+                # 从完成的任务中收集结果
+                results = [task.result() for task in done]
                 dealer, _, shares, commitments = zip(*results)
-                    
+                print(f"layer ID: {self.layer_ID} my id: {self.my_id} dealers: {dealer}")
+
+                 # 这里增加的代码是改进的 Fluid MPC 的代码，增加了MVBA 的过程，来共识一个公共子集
+                # 这一步是 MVBA 的过程
+                fluid_mvba_time = time.time()
+                key_proposal = []
+                # for i in range(self.n - self.t): key_proposal.append(dealer[i])
+                key_proposal = random.sample(dealer, self.n - self.t)  # 从dealer随机选择n-t个不重复的元素
+                create_acs_task = asyncio.create_task(self.agreement(key_proposal))
+
+                acs, key_task, work_tasks = await create_acs_task
+                await acs
+                subset = await key_task
+                await asyncio.gather(*work_tasks)
+                fluid_mvba_time = time.time() - fluid_mvba_time
+                print(f"fluid_mvba_time: {fluid_mvba_time} layer ID: {self.layer_ID} my id: {self.my_id} common_subset: {subset}") 
                 
                 new_shares = []
                 for i in range(len(dealer)): 
@@ -796,6 +1079,7 @@ class ADMPC_Dynamic(ADMPC):
 
                 print(f"over")
 
+            # 这里表示的是正在进行的电路计算
             else: 
                 print(f"ok")
                 recv_input_time = time.time()
@@ -813,19 +1097,38 @@ class ADMPC_Dynamic(ADMPC):
                                     )
                     # 这里的 rounds 也是手动更改的
                     if self.layer_ID == 3:
-                        rounds = input_num * 2 + (w - 2) * 5 + w
+                        rounds = 6 * w + 2
                     # elif self.layer_ID == 3: 
                     #     rounds = input_num * 2 + (w - 2) * 5 + w
                     else: 
-                        rounds = input_num * 2 + (w - 2) * 5 + w + 2
+                        # 这里 + 4 除了是因为rand_values 的长度是 w+2 以外，还加上了 u 和 v
+                        rounds = 6 * w + 4
                     self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
                     # 对于每一个dealer ID，下一层都要创一个来接受这个dealer ID分发的ACSS实例
-                results = await asyncio.gather(*self.acss_tasks)
+                done, pending = await asyncio.wait(self.acss_tasks, return_when=asyncio.ALL_COMPLETED)
+    
+                # 从完成的任务中收集结果
+                results = [task.result() for task in done]
                 dealer, _, shares, commitments = zip(*results)
+                print(f"layer ID: {self.layer_ID} my id: {self.my_id} dealers: {dealer}")
                     
-                
+                 # 这里增加的代码是改进的 Fluid MPC 的代码，增加了MVBA 的过程，来共识一个公共子集
+                # 这一步是 MVBA 的过程
+                fluid_mvba_time = time.time()
+                key_proposal = []
+                # for i in range(self.n - self.t): key_proposal.append(dealer[i])
+                key_proposal = random.sample(dealer, self.n - self.t)  # 从dealer随机选择n-t个不重复的元素
+                create_acs_task = asyncio.create_task(self.agreement(key_proposal))
+
+                acs, key_task, work_tasks = await create_acs_task
+                await acs
+                subset = await key_task
+                await asyncio.gather(*work_tasks)
+                fluid_mvba_time = time.time() - fluid_mvba_time
+                print(f"fluid_mvba_time: {fluid_mvba_time} layer ID: {self.layer_ID} my id: {self.my_id} common_subset: {subset}")
+
                 new_shares = []
                 for i in range(len(dealer)): 
                     for j in range(len(shares[i]['msg'])): 
@@ -854,19 +1157,22 @@ class ADMPC_Dynamic(ADMPC):
 
                 if self.layer_ID < len(self.admpc_control_instance.pks_all) - 1:
                     len_rec_shares = len(rec_shares)
+                    # 这里这个 if 表示的是 下一层是客户端
                     if self.layer_ID + 1 == len(self.admpc_control_instance.pks_all) - 1: 
                         # 这里 servers 需要做的是将 u 和 v 累加，然后传递 u,v,r,z 到 clients
-                        z = rec_shares[:cm]
-                        if self.layer_ID == 3: 
-                            rand_shares = rec_shares[2*input_num+5*(w-2):]
-                            u = rand_shares[1]
-                            v = rand_shares[2]
-                        else: 
-                            rand_shares = rec_shares[2*input_num+5*(w-2):len_rec_shares-2]
-                            u = rec_shares[len_rec_shares-2]
-                            v = rec_shares[len_rec_shares-1]
+                        z = rec_shares[:w]
+                        # if self.layer_ID == 3: 
+                        #     rand_shares = rec_shares[2*input_num+5*(w-2):]
+                        #     u = rand_shares[1]
+                        #     v = rand_shares[2]
+                        # else: 
+                        #     rand_shares = rec_shares[2*input_num+5*(w-2):len_rec_shares-2]
+                        #     u = rec_shares[len_rec_shares-2]
+                        #     v = rec_shares[len_rec_shares-1]
 
-                        trans_shares = z + [rand_shares[0]] + [u] + [v]
+                        # 这里进行了简化，直接让 rec_shares 里面的值当 u, r, v
+                        trans_shares = z + [rec_shares[0]] + [rec_shares[0]] + [rec_shares[0]]
+                        # trans_shares = z + [rand_shares[0]] + [u] + [v]
                         print(f"len trans shares: {len(trans_shares)}")
 
                         print(f"before trans")
@@ -904,36 +1210,44 @@ class ADMPC_Dynamic(ADMPC):
 
                         # 这里的 execution stage 需要执行当前层的计算
                         # 需要执行的计算有：a*b, ra*b, \alpha*\beta, \alpha*c, \alpha*rc
-                        input_shares = rec_shares[:input_num]
-                        masked_shares = rec_shares[input_num:2*input_num]
-                        if self.layer_ID == 3: 
-                            rand_shares = rec_shares[2*input_num+5*(w-2):]
-                            u = rand_shares[1]
-                            v = rand_shares[2]
-                        else: 
-                            rand_shares = rec_shares[2*input_num+5*(w-2):len_rec_shares-2]
-                            u = rec_shares[len_rec_shares-2]
-                            v = rec_shares[len_rec_shares-1]
+                        input_shares = rec_shares[:w]
+                        masked_shares = rec_shares[w:2*w]
+                        # if self.layer_ID == 3: 
+                        #     rand_shares = rec_shares[2*input_num+5*(w-2):]
+                        #     u = rand_shares[1]
+                        #     v = rand_shares[2]
+                        # else: 
+                        #     rand_shares = rec_shares[2*input_num+5*(w-2):len_rec_shares-2]
+                        #     u = rec_shares[len_rec_shares-2]
+                        #     v = rec_shares[len_rec_shares-1]
+                        # 这里也作了简化，随便让两个值当 u 和 v
+                        rand_shares = rec_shares[:w+2]
+                        u = rec_shares[0]
+                        v = rec_shares[1]
 
-                        output_shares = [None] * cm
-                        output_masked_shares = [None] * cm
-                        current_rand_shares = [None] * cm
-                        rand_last_layer_outputs = [None] * cm
-                        rand_last_layer_masked_outputs = [None] * cm
+                        output_shares = [None] * w
+                        output_masked_shares = [None] * w
+                        current_rand_shares = [None] * w
+                        rand_last_layer_outputs = [None] * w
+                        rand_last_layer_masked_outputs = [None] * w
 
-                        for i in range(cm):
+                        for i in range(w):
                             output_shares[i] = input_shares[0] * input_shares[1]    # a*b
                             output_masked_shares[i] = input_shares[0] * masked_shares[0]    # ra*b
                             current_rand_shares[i] = rand_shares[1] * rand_shares[2]    # \alpha*\beta
+                            # current_rand_shares[i] = input_shares[0] * input_shares[1]     # \alpha*\beta
                             rand_last_layer_outputs[i] = rand_shares[2] * input_shares[0]   # \alpha*c
+                            # rand_last_layer_outputs[i] = input_shares[0] * input_shares[1]    # \alpha*c
                             rand_last_layer_masked_outputs[i] = rand_shares[2] * masked_shares[0]   # \alpha*rc
+                            # rand_last_layer_masked_outputs[i] = input_shares[0] * input_shares[1]   # \alpha*rc
                         
                         # 这里是执行 u 和 v 的累加
                         # if self.layer_ID != 2: 
 
 
                         # 这里我们需要把 原始输入、乘以随机数的输入以及所有随机数传递给下一层
-                        trans_values = output_shares + output_shares + output_masked_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_last_layer_masked_outputs + rand_shares + [u] + [v]
+                        # 6 * w + 4
+                        trans_values = output_shares + output_masked_shares + current_rand_shares + rand_last_layer_outputs + rand_last_layer_masked_outputs + rand_shares + [u] + [v]
                         acss_pre_time = time.time()
                         pks_next_layer = self.admpc_control_instance.pks_all[self.layer_ID + 1]       # 下一层的公钥组
 
@@ -958,5 +1272,5 @@ class ADMPC_Dynamic(ADMPC):
 
         layer_time = time.time() - layer_time
         print(f"layer ID: {self.layer_ID} layer_time: {layer_time}")
-        
+    
         

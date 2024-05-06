@@ -30,7 +30,7 @@ source -- ./config.sh
 # [ $# -ge 1 ] || (echo "Please input the command." 1>&2 && exit 1)
 
 base_port=7000  # 设定一个基础端口号，比如7000
-containers_per_node=14  # 每个服务器上的容器数量，相当于是多少层
+containers_per_node=1  # 每个服务器上的容器数量，相当于是多少层
 delay_between_ssh_commands=0.1
 
 for j in $(seq 1 $containers_per_node); do
@@ -44,9 +44,9 @@ for j in $(seq 1 $containers_per_node); do
         file_num=$(((j-1)*NODE_NUM+i-1))
         # ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.admpc_dynamic_run -d -f conf/admpc_100_1_16/local.$file_num.json -time 12" &
         
-        ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.fluid_mpc_run -d -f conf/fluid_100_10_16/local.$file_num.json -time 12" &
+        # ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.fluid_mpc_run -d -f conf/fluid_100_2_16/local.$file_num.json -time 12" &
         
-        # ssh "$ssh_user_host" -- "cd ~/htadkg && docker-compose run -p $external_port:$external_port adkg python3 -m scripts.honeybadgermpc_run -d -f conf/honeybadgermpc_100_6_16/local.$file_num.json -time 12" &
+        ssh "$ssh_user_host" -- "reboot" &
         sleep $delay_between_ssh_commands
 
         # 如果您有其他命令需要在节点上执行，请取消下面这行注释并适当调整
