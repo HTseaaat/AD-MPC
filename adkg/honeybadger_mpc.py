@@ -163,11 +163,16 @@ class ADMPC:
                 key_proposal = rbc_number
                 poly, err = [None] * len(rbc_shares), [None] * len(rbc_shares)
                 rec_robust_interpolate_time = time.time()
+<<<<<<< HEAD
                 rec_values = []
                 for i in range(len(rbc_shares)): 
                     poly[i], err[i] = await robust_rec_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
                     constant = int(poly[i].coeffs[0])
                     rec_values.append(self.ZR(constant))
+=======
+                for i in range(len(rbc_shares)): 
+                    poly[i], err[i] = await robust_rec_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
+>>>>>>> 628abe2187076ba4c91a6a60f30249128b984ff8
                 rec_robust_interpolate_time = time.time() - rec_robust_interpolate_time
                 print(f"rec_robust_interpolate_time: {rec_robust_interpolate_time}")
                 te = int(poly[0].coeffs[0])
@@ -184,7 +189,10 @@ class ADMPC:
                 print(f"my id: {self.my_id} key_proposal: {key_proposal}")
                 rec_de_time = time.time() - rec_de_time
                 print(f"rec_de_time: {rec_de_time}")
+<<<<<<< HEAD
                 return (key_proposal, rec_values)
+=======
+>>>>>>> 628abe2187076ba4c91a6a60f30249128b984ff8
 
                 # 这一步是 MVBA 的过程
                 rec_mvba_time = time.time()
@@ -262,7 +270,11 @@ class ADMPC:
         # # rec_gamma, rec_epsilon = await asyncio.gather(self.robust_rec_step(gamma, 0), self.robust_rec_step(epsilon, 1))  
         # print(f"sttime: {time.time()-sttime}")
         
+<<<<<<< HEAD
         # 这里我模拟的是 layer = 3 时敌手注入攻击的情况
+=======
+        # 这里我模拟的是 layer = 1 时敌手注入攻击的情况
+>>>>>>> 628abe2187076ba4c91a6a60f30249128b984ff8
         if layer == 3: 
             print(f"ok")
             batch_rec_list = []
@@ -398,8 +410,12 @@ class ADMPC:
 
          # honeybadgermpc 第一步需要调用 aprep 协议生成电路需要的三元组
         layers = self.layers - 2
+<<<<<<< HEAD
         # 这里电路有多少层需要手动改
         layers = 10
+=======
+        layers = 6
+>>>>>>> 628abe2187076ba4c91a6a60f30249128b984ff8
         # layers = 9
         self.cm = int(self.total_cm / layers)
         cm = self.cm

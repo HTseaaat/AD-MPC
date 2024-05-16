@@ -511,11 +511,16 @@ class APREP:
                 key_proposal = rbc_number
                 poly, err = [None] * len(rbc_shares), [None] * len(rbc_shares)
                 rec_robust_interpolate_time = time.time()
+<<<<<<< HEAD
                 rec_values = []
                 for i in range(len(rbc_shares)): 
                     poly[i], err[i] = await robust_rec_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
                     constant = int(poly[i].coeffs[0])
                     rec_values.append(self.ZR(constant))
+=======
+                for i in range(len(rbc_shares)): 
+                    poly[i], err[i] = await robust_rec_admpc(rbc_shares[i], key_proposal, GFEG1, self.t, point, self.t)
+>>>>>>> 628abe2187076ba4c91a6a60f30249128b984ff8
                 rec_robust_interpolate_time = time.time() - rec_robust_interpolate_time
                 print(f"rec_robust_interpolate_time: {rec_robust_interpolate_time}")
                 te = int(poly[0].coeffs[0])
@@ -532,7 +537,10 @@ class APREP:
                 print(f"my id: {self.my_id} key_proposal: {key_proposal}")
                 rec_de_time = time.time() - rec_de_time
                 print(f"rec_de_time: {rec_de_time}")
+<<<<<<< HEAD
                 return (key_proposal, rec_values)
+=======
+>>>>>>> 628abe2187076ba4c91a6a60f30249128b984ff8
 
                 # 这一步是 MVBA 的过程
                 rec_mvba_time = time.time()
