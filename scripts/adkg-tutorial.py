@@ -107,7 +107,7 @@ if __name__ == "__main__":
                 HbmpcConfig.t,
                 HbmpcConfig.k,
                 HbmpcConfig.my_id,
-                HbmpcConfig.time,
+                HbmpcConfig.time
             )
         )
     finally:

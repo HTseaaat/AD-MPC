@@ -409,12 +409,12 @@ class ADMPC_Dynamic(ADMPC):
 
     
     async def run_computation(self, inputs, gate_tape, mult_triples):
-        # 这里简化一下，后面的代码是正常的执行计算的过程，这里为了方便测试作了简化，只计算乘法
+        # 这里简化一下，后面的代码是正常的执行计算的过程
         self.gates_num = len(gate_tape)
         gate_input_values = [[self.ZR(0) for _ in range(2)] for _ in range(self.gates_num)]
         for i in range(self.gates_num): 
             for j in range(2): 
-                gate_input_values[i][j] = inputs[j]
+                gate_input_values[i][j] = inputs[i*2+j]
         # 输出存在这里
         gate_output_values = [None] * self.gates_num
         # 这两个用来记录当前层的乘法门位置和数量，用来做当前层乘法门的批处理
@@ -470,9 +470,12 @@ class ADMPC_Dynamic(ADMPC):
     async def run_admpc(self, start_time):
         acss_start_time = time.time()
         self.public_keys = self.public_keys[self.n*self.layer_ID:self.n*self.layer_ID+self.n]
+        # cm 表示每一层的乘法门数
         cm = int(self.admpc_control_instance.total_cm/(self.admpc_control_instance.layer_num-2))
-        w = cm
-        len_values = cm
+        # w 表示每一层的电路宽度
+        w = cm * 2
+        # len_values 表示的是 需要传递给下一层的 values 的数目
+        len_values = w
         print(f"cm: {cm} total_cm: {self.admpc_control_instance.total_cm}")
 
         # 计算每层的时间
@@ -480,8 +483,13 @@ class ADMPC_Dynamic(ADMPC):
 
         # 我们假设 layer_ID = 0 时是 clients 提供输入给 servers
         if self.layer_ID == 0:
+            # 客户端的输入的 values 数目要等于 2 * w
+            inputs_num = int((2*w)/self.n) + 1
+            clients_inputs = []
+            for i in range(inputs_num):
+                clients_inputs.append(self.ZR.rand())
 
-            clients_inputs = [self.ZR.rand()]
+            # clients_inputs = [self.ZR.rand()]
 
             # 此处传递的公钥应该是下一层的公钥
             acss_pre_time = time.time()
@@ -560,8 +568,8 @@ class ADMPC_Dynamic(ADMPC):
                                     acsssend, acssrecv, self.pc, self.ZR, self.G1, 
                                     mpc_instance=self
                                 )
-                # 这里的 rounds 也是手动更改的
-                rounds = 1
+                # 这里的 rounds 也是手动更改的，这里的 rounds 是来自上一层每个参与方 ACSS 的 values 的个数
+                rounds = 13
                 self.acss_tasks[dealer_id] = asyncio.create_task(self.acss.avss(0, dealer_id, rounds))
 
 
@@ -620,8 +628,12 @@ class ADMPC_Dynamic(ADMPC):
             # 这里是 execution stage 的 step 1，执行当前层的计算
             exec_time = time.time()
             gate_tape = []
+            # 这是生成当前层电路的乘法门
             for i in range(cm): 
                 gate_tape.append(1)
+            # 这是生成当前层电路的加法门
+            for i in range(w-cm):
+                gate_tape.append(0)
             gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
             exec_time = time.time() - exec_time
             print(f"layer ID: {self.layer_ID} exec_time: {exec_time}")
@@ -790,9 +802,14 @@ class ADMPC_Dynamic(ADMPC):
                 # 这里是 execution stage 的 step 1，执行当前层的计算
                 exec_time = time.time()
                 gate_tape = []
+                # 这是生成当前层电路的乘法门
                 for i in range(cm): 
                     gate_tape.append(1)
-                gate_outputs = await self.run_computation(new_shares, gate_tape, new_mult_triples)
+                # 这是生成当前层电路的加法门
+                for i in range(w-cm):
+                    gate_tape.append(0)
+                gate_inputs = new_shares + new_shares
+                gate_outputs = await self.run_computation(gate_inputs, gate_tape, new_mult_triples)
                 exec_time = time.time() - exec_time
                 print(f"layer ID: {self.layer_ID} exec_time: {exec_time}")
                 # print(f"my id: {self.my_id} outputs: {gate_outputs}")

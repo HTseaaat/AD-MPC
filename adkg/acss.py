@@ -2087,6 +2087,7 @@ class ACSS_Fluid_Foll(ACSS):
         (dealer, _, shares, commitments) = await self._process_avss_msg_dynamic(avss_id, dealer_id, rbc_msg)
         acss_process_time = time.time() - acss_process_time
         print(f"acss_process_time: {acss_process_time}")
+        print(f"layer ID: {self.mpc_instance.layer_ID} my id: {self.my_id} dealer: {dealer}")
         return (dealer, _, shares, commitments)
         
         # for task in self.tagvars[acsstag]['tasks']:
