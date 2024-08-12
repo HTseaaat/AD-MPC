@@ -1,6 +1,6 @@
-# Prototype implementation for the paper Practical Asynchronous High-threshold Distributed Key Generation and Distributed Polynomial Sampling
+# AD-MPC: Fully Asynchronous Dynamic MPC with Guaranteed Output Delivery
 
-## Running on local machine
+<!-- ## Running on local machine
 
 ### Required tools
 1. Install `Docker`_. (For Linux, see `Manage Docker as a non-root user`_) to
@@ -59,4 +59,4 @@ To cite:
    booktitle={31st USENIX Security Symposium (USENIX Security 23)},
    year={2023}
 }
-```
+``` -->
